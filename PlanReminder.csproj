@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>PlanReminder</AssemblyName>
+    <RootNamespace>PlanReminder</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>计划表</Product>
+    <Description>离线 Windows 计划管理软件</Description>
+    <ApplicationIcon>assets/app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <DebugType>embedded</DebugType>
+    <PathMap>$(MSBuildProjectDirectory)=/_/PlanReminder</PathMap>
+  </PropertyGroup>
+</Project>

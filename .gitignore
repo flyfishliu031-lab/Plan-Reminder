@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.build-cache/
+.build-tools/
+.dotnet-home/
+artifacts/
+.vs/
+*.user
+*.tmp
+plans*.json
