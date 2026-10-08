@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.3.0"
 #endif
 [Setup]
 AppId={{575393DA-E197-4747-A9D8-45E949FA0FD2}
@@ -35,6 +35,9 @@ Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\assets\editor.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "..\assets\main.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "..\assets\settings.png"; DestDir: "{app}\assets"; Flags: ignoreversion
+Source: "..\assets\long-term.png"; DestDir: "{app}\assets"; Flags: ignoreversion
+Source: "..\assets\editor-long-term.png"; DestDir: "{app}\assets"; Flags: ignoreversion
+Source: "..\assets\editor-multiline.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 [Icons]
 Name: "{group}\计划表"; Filename: "{app}\PlanReminder.exe"
 Name: "{autodesktop}\计划表"; Filename: "{app}\PlanReminder.exe"; Tasks: desktopicon

@@ -1,4 +1,4 @@
-param([string]$InnoCompiler, [string]$Version = '1.2.0')
+param([string]$InnoCompiler, [string]$Version = '1.3.0')
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path $PSScriptRoot -Parent)
 $env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'
@@ -20,6 +20,9 @@ New-Item -ItemType Directory -Path artifacts\publish\assets -Force | Out-Null
 Copy-Item -LiteralPath assets\editor.png -Destination artifacts\publish\assets\editor.png -Force
 Copy-Item -LiteralPath assets\main.png -Destination artifacts\publish\assets\main.png -Force
 Copy-Item -LiteralPath assets\settings.png -Destination artifacts\publish\assets\settings.png -Force
+Copy-Item -LiteralPath assets\long-term.png -Destination artifacts\publish\assets\long-term.png -Force
+Copy-Item -LiteralPath assets\editor-long-term.png -Destination artifacts\publish\assets\editor-long-term.png -Force
+Copy-Item -LiteralPath assets\editor-multiline.png -Destination artifacts\publish\assets\editor-multiline.png -Force
 Compress-Archive -LiteralPath artifacts\publish\PlanReminder.exe,artifacts\publish\README.md,artifacts\publish\assets -DestinationPath "artifacts\PlanReminder-$Version-Portable-x64.zip" -Force
 if (!$InnoCompiler) {
     $compilerCandidates = @('.build-tools\inno\ISCC.exe', 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe', 'C:\Program Files\Inno Setup 7\ISCC.exe')

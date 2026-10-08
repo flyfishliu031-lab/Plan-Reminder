@@ -7,7 +7,7 @@ internal sealed class MainForm : Form
 {
     private readonly PlanStore store;
     private readonly AppSettings settings;
-    private readonly NotifyIcon tray = new() { Icon = Theme.AppIcon, Text = "计划表" };
+    private readonly NotifyIcon tray = new() { Icon = Theme.AppIcon, Text = $"计划表 v{Program.AppVersion}" };
     private readonly ContextMenuStrip trayMenu = new() { Font = Theme.Body };
     private bool exitRequested;
     private bool trayHintShown;
@@ -16,6 +16,8 @@ internal sealed class MainForm : Form
     private readonly Label summary = Theme.Label("", Theme.Small, Theme.Muted);
     private readonly Label clock = Theme.Label("", Theme.Small, Theme.Muted);
     private readonly Button unscheduled = Theme.Button("待安排");
+    private readonly Button longTerm = Theme.Button("长期计划");
+    private readonly Label footer = Theme.Label("", Theme.Small, Theme.Muted);
     private readonly FlowLayoutPanel list = new() { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Dock = DockStyle.Fill };
     private readonly Panel notice = new() { Dock = DockStyle.Fill, BackColor = Theme.SoftAccent, Visible = false };
     private readonly Label noticeText = Theme.Label("", Theme.Small);
@@ -26,6 +28,7 @@ internal sealed class MainForm : Form
     private DateOnly? selectedDay = DateOnly.FromDateTime(DateTime.Now);
     private DateOnly today = DateOnly.FromDateTime(DateTime.Now);
     private bool cardLayoutQueued;
+    private bool showingSeries;
     private PlanItem? deleted;
     internal CalendarView Calendar => calendar;
     internal FlowLayoutPanel PlanList => list;
@@ -37,7 +40,7 @@ internal sealed class MainForm : Form
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
         store = data;
         settings = preferences ?? new AppSettings(Path.GetDirectoryName(data.FilePath)!);
-        Text = "计划表"; Font = Theme.Body; BackColor = Theme.Canvas; ForeColor = Theme.Ink;
+        Text = $"计划表 · v{Program.AppVersion}"; Font = Theme.Body; BackColor = Theme.Canvas; ForeColor = Theme.Ink;
         ClientSize = new Size(1180, 780); MinimumSize = new Size(840, 500);
         StartPosition = FormStartPosition.CenterScreen;
         Icon = Theme.AppIcon;
@@ -57,7 +60,8 @@ internal sealed class MainForm : Form
         tray.DoubleClick += (_, _) => RestoreWindow();
         Shown += (_, _) => tray.Visible = true;
         calendar.DateSelected += day => SelectDate(day);
-        unscheduled.Click += (_, _) => { selectedDay = null; RefreshViews(); };
+        unscheduled.Click += (_, _) => { showingSeries = false; selectedDay = null; RefreshViews(); };
+        longTerm.Click += (_, _) => ShowLongTerm();
         list.SizeChanged += (_, _) => ResizeCards();
         list.Layout += (_, _) => ResizeCards();
         list.SizeChanged += (_, _) =>
@@ -109,7 +113,7 @@ internal sealed class MainForm : Form
         var legend = Theme.Label("彩色圆点表示当天已有计划", Theme.Small, Theme.Muted); Row(legend, 20);
         var goToday = Theme.Button("回到今天");
         goToday.Click += (_, _) => SelectDate(DateOnly.FromDateTime(DateTime.Now));
-        Row(goToday, 10); Row(unscheduled, 28);
+        Row(goToday, 10); Row(unscheduled, 10); Row(longTerm, 28);
         Row(Theme.Label("数据与设置", Theme.Small, Theme.Muted), 12);
         var backups = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty };
         backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36)); backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
@@ -163,7 +167,6 @@ internal sealed class MainForm : Form
         noticeText.Padding = new Padding(12, 0, 0, 0); noticeText.AutoEllipsis = true;
         undo.Dock = DockStyle.Right; undo.Width = 80; undo.BackColor = notice.BackColor; undo.FlatAppearance.BorderSize = 0;
         notice.Controls.Add(noticeText); notice.Controls.Add(undo);
-        var footer = Theme.Label("勾选划去 · Ctrl+N 添加 · Ctrl+Z 撤销删除", Theme.Small, Theme.Muted);
         footer.Dock = DockStyle.Top; footer.Margin = new Padding(0, 16, 0, 0);
         content.SizeChanged += (_, _) =>
         {
@@ -177,20 +180,28 @@ internal sealed class MainForm : Form
 
     internal void SelectDate(DateOnly date)
     {
-        selectedDay = date; RefreshViews(true);
+        showingSeries = false; selectedDay = date; RefreshViews(true);
     }
+
+    internal void ShowLongTerm() { showingSeries = true; selectedDay = null; RefreshViews(); }
 
     internal void RefreshViews(bool navigate = false)
     {
         var scrollPosition = list.VerticalScroll.Value;
-        var visible = store.Plans.Where(p => selectedDay is { } day ? p.AppearsOn(day) : p.Day is null)
-            .OrderBy(p => p.StartsAt ?? DateTime.MaxValue).ThenBy(p => p.CreatedAt).ToArray();
-        heading.Text = selectedDay is { } selected ? selected.ToString("M月d日 · dddd", CultureInfo.GetCultureInfo("zh-CN")) : "待安排";
-        var completeCount = visible.Count(p => p.IsCompleted);
+        var visible = store.Plans.Where(p => showingSeries ? p.IsRecurring : selectedDay is { } day ? p.AppearsOn(day) : p.Day is null)
+            .OrderBy(p => p.IsRecurring && selectedDay is { } date && p.Start is { } time ? date.ToDateTime(time) :
+                p.StartsAt ?? DateTime.MaxValue).ThenBy(p => p.CreatedAt).ToArray();
+        heading.Text = showingSeries ? "长期计划" : selectedDay is { } selected ? selected.ToString("M月d日 · dddd", CultureInfo.GetCultureInfo("zh-CN")) : "待安排";
+        var completeCount = visible.Count(p => showingSeries ? p.SeriesFinished(today) : p.IsCompleteOn(selectedDay ?? today));
         summary.Text = visible.Length == 0 ? "添加一个计划，开始安排。" : $"{visible.Length} 项计划   ·   {visible.Length - completeCount} 项待完成   ·   {completeCount} 项已完成";
         unscheduled.Text = $"待安排  ·  {store.Plans.Count(p => p.Day is null)}";
-        unscheduled.BackColor = selectedDay is null ? Theme.SoftAccent : Color.White;
-        unscheduled.ForeColor = selectedDay is null ? Theme.Accent : Theme.Ink;
+        unscheduled.BackColor = selectedDay is null && !showingSeries ? Theme.SoftAccent : Color.White;
+        unscheduled.ForeColor = selectedDay is null && !showingSeries ? Theme.Accent : Theme.Ink;
+        longTerm.Text = $"长期计划  ·  {store.Plans.Count(p => p.IsRecurring)}";
+        longTerm.BackColor = showingSeries ? Theme.SoftAccent : Color.White;
+        longTerm.ForeColor = showingSeries ? Theme.Accent : Theme.Ink;
+        footer.Text = showingSeries ? "勾选记录今天完成 · 日历可恢复历史记录 · 删除会移除整个长期计划，可撤销" :
+            "勾选划去 · Ctrl+N 添加 · Ctrl+Z 撤销删除";
         calendar.SetData(store.Plans, selectedDay, navigate);
         // ponytail: redraw this day's cards; virtualize if a day routinely holds hundreds of plans.
         list.SuspendLayout();
@@ -204,7 +215,7 @@ internal sealed class MainForm : Form
         }
         foreach (var item in visible)
         {
-            var card = new PlanCard(item);
+            var card = new PlanCard(item, selectedDay ?? today, showingSeries);
             card.CompletionRequested += ToggleCompletion;
             card.EditRequested += plan => EditPlan(plan);
             card.DeleteRequested += DeletePlan;
@@ -222,7 +233,8 @@ internal sealed class MainForm : Form
 
     private void EditPlan(PlanItem? existing)
     {
-        var item = existing ?? new PlanItem { Day = selectedDay, Color = Palette.Next(store.Plans) };
+        var item = existing ?? new PlanItem { Day = showingSeries ? today : selectedDay,
+            RepeatCount = showingSeries ? 30 : null, Color = Palette.Next(store.Plans) };
         while (true)
         {
             using var editor = new PlanEditor(item, existing is null);
@@ -238,7 +250,12 @@ internal sealed class MainForm : Form
 
     internal void ToggleCompletion(PlanItem item)
     {
-        Attempt(() => store.Save(item with { IsCompleted = !item.IsCompleted, UpdatedAt = DateTimeOffset.Now }));
+        var day = selectedDay ?? today;
+        Attempt(() =>
+        {
+            if (item.IsRecurring && day > today) throw new ArgumentException("未来日期的长期计划到当天才可记录完成。");
+            store.Save(item.ToggleOn(day));
+        });
         RefreshViews();
     }
 
@@ -300,7 +317,7 @@ internal sealed class MainForm : Form
         var sign = offset < TimeSpan.Zero ? "−" : "+";
         clock.Text = $"系统时间  ·  {now:yyyy/MM/dd  HH:mm:ss}   (UTC{sign}{offset.Duration():hh\\:mm})";
         var date = DateOnly.FromDateTime(now);
-        if (date != today) { today = date; calendar.SetData(store.Plans, selectedDay); }
+        if (date != today) { today = date; RefreshViews(); }
     }
 
     internal void RestoreWindow()

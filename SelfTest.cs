@@ -52,7 +52,7 @@ internal static class SelfTest
         var before = File.ReadAllText(imported.FilePath);
         Reject(() => imported.Import(malformed), "malformed backup rejected");
         Check(File.ReadAllText(imported.FilePath) == before, "failed import leaves stored data unchanged");
-        File.WriteAllText(malformed, "{\"schemaVersion\":2,\"plans\":[]}");
+        File.WriteAllText(malformed, "{\"schemaVersion\":99,\"plans\":[]}");
         Reject(() => imported.Import(malformed), "unknown schema rejected");
         File.WriteAllText(malformed, "{\"schemaVersion\":1,\"plans\":[null]}");
         Reject(() => imported.Import(malformed), "null plan rejected");
@@ -98,6 +98,96 @@ internal static class SelfTest
         scheduledEditor.SavePlan();
         Check(scheduledEditor.Result is { } scheduledPlan && scheduledPlan.Title == "修改后的跨天计划" && scheduledPlan.StartsAt == crossDay.StartsAt && scheduledPlan.EndsAt == crossDay.EndsAt,
             "editor saves edited title and retains cross-day schedule");
+
+        var begin = today.AddDays(-4);
+        var daily = new PlanItem { Title = "每天学习", Day = begin, RepeatUntil = today, Color = Palette.Colors[2] };
+        daily.Validate();
+        Check(daily.AppearsOn(begin) && daily.AppearsOn(today) && !daily.AppearsOn(begin.AddDays(-1)) && !daily.AppearsOn(today.AddDays(1)),
+            "duration recurrence includes start and final day only");
+        Check(!daily.SeriesFinished(today) && daily.SeriesFinished(today.AddDays(1)), "duration recurrence ends after final day even if days were missed");
+        var recorded = daily.ToggleOn(begin).ToggleOn(today);
+        Check(recorded.CompletionDates.Count == 2 && recorded.IsCompleteOn(begin) && !recorded.IsCompleteOn(begin.AddDays(1)), "daily completion is recorded independently");
+        var restoredDay = recorded.ToggleOn(begin);
+        Check(restoredDay.CompletionDates.Count == 1 && restoredDay.IsCompleteOn(today), "restoring one day preserves other daily records");
+        Check(restoredDay.SeriesFinished(today.AddDays(1)), "restoring history does not extend a duration goal");
+        Reject(() => daily.ToggleOn(today.AddDays(1)), "completion outside recurrence range rejected");
+        var countGoal = daily with { RepeatUntil = null, RepeatCount = 2 };
+        var countDone = countGoal.ToggleOn(begin).ToggleOn(today);
+        Check(countDone.SeriesFinished(today) && !countDone.AppearsOn(today.AddDays(1)) && countDone.AppearsOn(begin.AddDays(1)),
+            "count goal ends after target and retains historical calendar dates");
+        var countRestored = countDone.ToggleOn(begin);
+        Check(!countRestored.SeriesFinished(today) && countRestored.AppearsOn(today.AddDays(30)), "restoring history reopens count goal");
+        Check(countGoal.ToggleOn(begin).ToggleOn(begin).CompletionDates.Count == 0, "same day cannot accumulate duplicate completions");
+        Reject(() => (daily with { Day = null }).Validate(), "recurrence requires start date");
+        Reject(() => (daily with { RepeatCount = 3 }).Validate(), "recurrence cannot combine duration and count goals");
+        Reject(() => (daily with { RepeatUntil = begin.AddDays(-1) }).Validate(), "backwards recurrence range rejected");
+        Reject(() => (countGoal with { RepeatCount = 0 }).Validate(), "zero recurrence target rejected");
+        Reject(() => (daily with { CompletedDates = [begin, begin] }).Validate(), "duplicate completion records rejected");
+        Reject(() => (daily with { CompletedDates = [begin.AddDays(-1)] }).Validate(), "completion before start rejected");
+        Reject(() => (daily with { RepeatUntil = begin.AddDays(3650) }).Validate(), "oversized duration goal rejected");
+        Reject(() => (daily with { Start = new TimeOnly(23, 0), End = new TimeOnly(1, 0), EndDay = begin.AddDays(1) }).Validate(),
+            "cross-day daily template rejected without changing ordinary cross-day plans");
+        var timedDaily = daily with { Start = new TimeOnly(9, 0), End = new TimeOnly(10, 0), EndDay = begin };
+        var timedSingle = new PlanItem { Title = "另一项计划", Day = today, EndDay = today, Start = new TimeOnly(9, 30), End = new TimeOnly(10, 30) };
+        Check(timedDaily.Overlaps(timedSingle) && timedSingle.Overlaps(timedDaily), "daily and ordinary overlap detected symmetrically");
+        Check(!(timedDaily with { CompletedDates = [today] }).Overlaps(timedSingle), "completed daily occurrence does not block ordinary schedule");
+        var longSingle = timedSingle with { Day = begin, Start = new TimeOnly(23, 0), EndDay = begin.AddDays(1), End = new TimeOnly(12, 0) };
+        Check(timedDaily.Overlaps(longSingle), "overlap detects following day after ordinary partial first day");
+        var anotherDaily = timedDaily with { Id = Guid.NewGuid(), Day = today, EndDay = today, RepeatUntil = today.AddDays(5) };
+        Check(timedDaily.Overlaps(anotherDaily) && !(timedDaily with { CompletedDates = [today] }).Overlaps(anotherDaily),
+            "daily series overlap respects dates and recorded exceptions");
+        var sortedStore = new PlanStore(Path.Combine(root, "sort-daily"));
+        sortedStore.Save(timedDaily with { Start = new TimeOnly(15, 0), End = new TimeOnly(16, 0) });
+        sortedStore.Save(timedSingle with { Start = new TimeOnly(8, 0), End = new TimeOnly(9, 0) });
+        using (var sortedForm = new MainForm(sortedStore))
+        {
+            sortedForm.SelectDate(today);
+            Check(sortedForm.PlanList.Controls.OfType<PlanCard>().First().Item.Id == timedSingle.Id,
+                "daily series sorts by occurrence time alongside ordinary plans");
+        }
+
+        var recurringStore = new PlanStore(Path.Combine(root, "recurring")); recurringStore.Save(countDone);
+        var recurringReopened = new PlanStore(Path.Combine(root, "recurring")); recurringReopened.Load();
+        Check(recurringReopened.Plans.Single().RepeatCount == 2 && recurringReopened.Plans.Single().CompletionDates.SequenceEqual(countDone.CompletionDates),
+            "recurrence goal and daily records survive restart");
+        var recurrenceBackup = Path.Combine(root, "recurrence-backup.json"); recurringStore.Export(recurrenceBackup);
+        var recurringImport = new PlanStore(Path.Combine(root, "recurring-import")); recurringImport.Import(recurrenceBackup);
+        Check(recurringImport.Plans.Single().CompletionDates.SequenceEqual(countDone.CompletionDates), "backup import preserves recurrence progress");
+        var legacy = Path.Combine(root, "legacy.json");
+        File.WriteAllText(legacy, "{\"schemaVersion\":1,\"plans\":[{\"id\":\"" + first.Id + "\",\"title\":\"旧版计划\",\"day\":\"" + today.ToString("yyyy-MM-dd") + "\"}]}");
+        Check(recurringImport.Import(legacy) == 1 && recurringImport.Plans.Any(p => p.Title == "旧版计划" && !p.IsRecurring), "version one backups remain readable");
+        using (var recurringForm = new MainForm(recurringStore))
+        {
+            recurringForm.ShowLongTerm();
+            Check(recurringForm.PlanList.Controls.OfType<PlanCard>().Single().Item.Id == countDone.Id, "long-term overview retains finished series");
+            recurringForm.SelectDate(begin); recurringForm.ToggleCompletion(recurringStore.Plans.Single());
+            Check(recurringStore.Plans.Single().CompletionDates.Count == 1 && !recurringStore.Plans.Single().SeriesFinished(today),
+                "calendar completion updates stored series progress");
+            recurringForm.DeletePlan(recurringStore.Plans.Single()); recurringForm.UndoDelete();
+            Check(recurringStore.Plans.Single().CompletionDates.SequenceEqual(countRestored.CompletionDates), "deleting and undoing series preserves daily records");
+        }
+        using (var futureCard = new PlanCard(countGoal, today.AddDays(1)))
+            Check(!futureCard.Controls.OfType<CheckBox>().Single().Enabled, "future daily completion is disabled");
+        using (var doneCard = new PlanCard(countDone, today, true))
+            Check(doneCard.Controls.OfType<CheckBox>().Single() is { Checked: true, Enabled: false } && doneCard.Controls.OfType<Label>().First().Font.Strikeout,
+                "finished overview uses strikethrough and preserves progress");
+        using (var recurrenceEditor = new PlanEditor(recorded, false))
+        {
+            recurrenceEditor.SavePlan();
+            Check(recurrenceEditor.Result is { RepeatUntil: { } last } editedDaily && last == today && editedDaily.CompletionDates.SequenceEqual(recorded.CompletionDates),
+                "editor retains duration goal and all completed days");
+        }
+        using (var goalEditor = new PlanEditor(countDone, false))
+        {
+            goalEditor.SavePlan();
+            Check(goalEditor.Result?.RepeatCount == 2 && goalEditor.Result.CompletionDates.SequenceEqual(countDone.CompletionDates), "editor retains count goal and progress");
+        }
+        using (var createEditor = new PlanEditor(first with { Day = null }, true))
+        {
+            Descendants(createEditor).OfType<CheckBox>().Single(box => box.Text == "设为长期计划（每天重复）").Checked = true;
+            createEditor.SavePlan();
+            Check(createEditor.Result is { IsRecurring: true, Day: not null }, "enabling long-term plan supplies required start date");
+        }
 
         var settings = new AppSettings(Path.Combine(root, "settings")); settings.Load();
         Check(!settings.ExitOnClose && !File.Exists(settings.FilePath), "first launch defaults to close-to-tray without writing settings");

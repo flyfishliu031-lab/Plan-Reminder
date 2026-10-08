@@ -15,23 +15,33 @@ internal sealed class PlanCard : UserControl
     public event Action<PlanItem>? EditRequested;
     public event Action<PlanItem>? DeleteRequested;
 
-    public PlanCard(PlanItem item)
+    public PlanCard(PlanItem item, DateOnly? occurrence = null, bool overview = false)
     {
         Item = item;
         DoubleBuffered = true;
         BackColor = Theme.Canvas;
         Margin = new Padding(0, 0, 0, 14);
         AccessibleName = item.Title;
-        complete.AutoSize = false; complete.Checked = item.IsCompleted;
-        complete.AccessibleName = item.IsCompleted ? $"恢复计划：{item.Title}" : $"划去计划：{item.Title}";
-        title.Text = item.Title; title.Font = item.IsCompleted ? Theme.CompletedTitle : Theme.Title;
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var day = occurrence ?? today;
+        var finished = overview && item.SeriesFinished(today);
+        var checkedOff = finished || item.IsCompleteOn(day);
+        complete.AutoSize = false; complete.Checked = checkedOff;
+        complete.Enabled = !item.IsRecurring || !finished && day <= today && item.AppearsOn(day);
+        complete.AccessibleName = checkedOff ? $"恢复计划：{item.Title}" : $"划去计划：{item.Title}";
+        if (item.IsRecurring) complete.AccessibleName = finished ? $"长期计划已结束：{item.Title}" :
+            $"{(checkedOff ? "恢复" : "完成")} {day:yyyy年MM月dd日} 的计划：{item.Title}";
+        title.Text = item.Title; title.Font = checkedOff ? Theme.CompletedTitle : Theme.Title;
         title.ForeColor = ColorTranslator.FromHtml(item.Color); title.AutoSize = false; title.AutoEllipsis = true;
-        timing.Text = item.TimeDescription() + (item.IsCompleted ? "   ·   已完成" : "");
+        timing.Text = item.TimeDescription() + (item.IsRecurring ? "\n" + item.RepeatDescription(today) +
+            (!overview ? $" · {(checkedOff ? "当天已完成" : day > today ? "未来日期当天可勾选" : "当天待完成")}" : !finished && checkedOff ? " · 今天已完成" : "") :
+            checkedOff ? "   ·   已完成" : "");
         timing.AutoSize = false;
         notes.Text = item.Notes; notes.AutoSize = false; notes.AutoEllipsis = true;
         complete.BackColor = title.BackColor = timing.BackColor = notes.BackColor = Color.White;
         edit.FlatAppearance.BorderSize = delete.FlatAppearance.BorderSize = 0;
         edit.ForeColor = Theme.Muted; delete.ForeColor = Theme.Danger;
+        if (item.IsRecurring) delete.AccessibleName = "删除整个长期计划及完成记录";
         edit.Font = delete.Font = Theme.Small; edit.Padding = delete.Padding = Padding.Empty;
         complete.CheckedChanged += (_, _) => CompletionRequested?.Invoke(item);
         edit.Click += (_, _) => EditRequested?.Invoke(item);

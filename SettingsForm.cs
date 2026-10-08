@@ -23,7 +23,7 @@ internal sealed class SettingsForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var heading = Theme.Label("设置", Theme.EditorHeading); heading.Margin = new Padding(0, 0, 0, 8); heading.Dock = DockStyle.Top;
-        var intro = Theme.Label("选择关闭主窗口时的行为。", Theme.Small, Theme.Muted);
+        var intro = Theme.Label($"计划表 v{Program.AppVersion} · 选择关闭主窗口时的行为。", Theme.Small, Theme.Muted);
         intro.Dock = DockStyle.Top; intro.Margin = new Padding(0, 0, 0, 20);
         var panel = new SurfacePanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         var options = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
@@ -41,7 +41,7 @@ internal sealed class SettingsForm : Form
         save.Click += (_, _) => SaveSettings(); actions.Controls.AddRange([save, cancel]); AcceptButton = save; CancelButton = cancel;
         layout.Controls.Add(heading, 0, 0); layout.Controls.Add(intro, 0, 1); layout.Controls.Add(panel, 0, 2);
         layout.Controls.Add(error, 0, 3);
-        layout.SizeChanged += (_, _) => error.MaximumSize = new Size(Math.Max(1, layout.ClientSize.Width - layout.Padding.Horizontal), 0);
+        layout.SizeChanged += (_, _) => intro.MaximumSize = error.MaximumSize = new Size(Math.Max(1, layout.ClientSize.Width - layout.Padding.Horizontal), 0);
         scroll.Layout += (_, _) => layout.MaximumSize = new Size(Math.Max(1, scroll.ClientSize.Width - scroll.Padding.Horizontal -
             (scroll.VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0)), 0);
         scroll.Controls.Add(layout); root.Controls.Add(scroll, 0, 0); root.Controls.Add(actions, 0, 1);

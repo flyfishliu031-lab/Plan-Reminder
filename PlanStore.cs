@@ -5,7 +5,7 @@ namespace PlanReminder;
 
 public sealed record PlanDocument
 {
-    public int SchemaVersion { get; init; } = 1;
+    public int SchemaVersion { get; init; } = 2;
     public List<PlanItem> Plans { get; init; } = [];
 }
 
@@ -82,7 +82,7 @@ public sealed class PlanStore
             throw new InvalidDataException("数据文件超过 20 MB，请检查是否选择了正确的备份。");
         var document = JsonSerializer.Deserialize<PlanDocument>(File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException("数据文件为空。");
-        if (document.SchemaVersion != 1 || document.Plans is null)
+        if (document.SchemaVersion is not (1 or 2) || document.Plans is null)
             throw new InvalidDataException("不支持此备份版本。");
         if (document.Plans.Any(p => p is null) || document.Plans.Select(p => p.Id).Distinct().Count() != document.Plans.Count)
             throw new InvalidDataException("备份存在重复编号或无效计划。");

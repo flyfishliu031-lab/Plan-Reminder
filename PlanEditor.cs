@@ -14,11 +14,17 @@ internal sealed class PlanEditor : Form
     private readonly CheckBox hasDuration = new() { Text = "设置预期时长", AutoSize = true };
     private readonly NumericUpDown duration = new() { Minimum = 1, Maximum = 525600, Value = 60 };
     private readonly ComboBox unit = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly CheckBox hasRepeat = new() { Text = "设为长期计划（每天重复）", AutoSize = true };
+    private readonly ComboBox repeatMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "长期计划结束方式" };
+    private readonly NumericUpDown repeatValue = new() { Minimum = 1, Maximum = 10000, Value = 30, AccessibleName = "长期计划目标数值" };
+    private readonly Label repeatHint = Theme.Label("", Theme.Small, Theme.Muted);
     private readonly Label error = Theme.Label("", Theme.Small, Theme.Danger);
     private readonly List<Button> swatches = [];
     private readonly Button customColor = Theme.Button("自定义颜色");
     private readonly TableLayoutPanel scheduleFields;
     private readonly TableLayoutPanel durationFields;
+    private readonly TableLayoutPanel repeatFields;
+    private readonly TableLayoutPanel endDateField;
     private readonly Panel dateField;
     private string color;
     private int previousUnit;
@@ -53,7 +59,7 @@ internal sealed class PlanEditor : Form
         var content = Section("计划内容");
         title.Text = item.Title; title.AccessibleName = "计划标题（必填）";
         title.PlaceholderText = "想做些什么？";
-        Add(content.Layout, Input(title, 56), 12);
+        Add(content.Layout, Input(title, 72, true), 12);
         Add(content.Layout, Theme.Label("备注 · 可选", Theme.Small, Theme.Muted), 8);
         notes.Text = item.Notes; notes.AccessibleName = "计划备注";
         notes.PlaceholderText = "补充说明、步骤或需要准备的东西";
@@ -82,7 +88,8 @@ internal sealed class PlanEditor : Form
         var endField = Field("结束时间", end); endField.Margin = new Padding(10, 0, 0, 0);
         times.Controls.Add(startField, 0, 0); times.Controls.Add(endField, 1, 0);
         Add(scheduleFields, times, 12);
-        Add(scheduleFields, Field("结束日期 · 跨天时选择下一天", endDate), 0);
+        endDateField = Field("结束日期 · 跨天时选择下一天", endDate);
+        Add(scheduleFields, endDateField, 0);
         Add(time.Layout, scheduleFields, 16);
 
         unit.Items.AddRange(["分钟", "小时"]); unit.SelectedIndex = 0;
@@ -100,6 +107,22 @@ internal sealed class PlanEditor : Form
         Add(durationFields, Theme.Label("记录预计用时，可与时间段分别设置。", Theme.Small, Theme.Muted), 0);
         Add(time.Layout, durationFields, 0);
         Add(body, time.Panel, 16);
+
+        var repeat = Section("长期计划");
+        hasRepeat.Checked = item.IsRecurring;
+        hasRepeat.Enabled = !item.IsRecurring || item.CompletionDates.Count == 0;
+        hasRepeat.AccessibleName = "设为长期计划（每天重复）";
+        Add(repeat.Layout, hasRepeat, 12);
+        repeatFields = Stack();
+        repeatMode.Items.AddRange(["持续天数", "完成次数"]);
+        repeatMode.SelectedIndex = item.RepeatCount is null ? 0 : 1;
+        repeatValue.Maximum = repeatMode.SelectedIndex == 0 ? 3650 : 10000;
+        repeatValue.Value = item.RepeatUntil is { } until && item.Day is { } begin ? until.DayNumber - begin.DayNumber + 1 : item.RepeatCount ?? 30;
+        Add(repeatFields, Field("结束方式", repeatMode), 12);
+        Add(repeatFields, Field("目标数值", repeatValue), 10);
+        Add(repeatFields, repeatHint, 0);
+        Add(repeat.Layout, repeatFields, 0);
+        Add(body, repeat.Panel, 16);
 
         var colorSection = Section("计划颜色");
         Add(colorSection.Layout, Theme.Label("用颜色区分计划，划去后仍保留原色。", Theme.Small, Theme.Muted), 12);
@@ -143,7 +166,11 @@ internal sealed class PlanEditor : Form
         hasDate.CheckedChanged += (_, _) => { if (!hasDate.Checked) hasSchedule.Checked = false; RefreshEnabled(); };
         hasSchedule.CheckedChanged += (_, _) => RefreshEnabled();
         hasDuration.CheckedChanged += (_, _) => RefreshEnabled();
-        date.ValueChanged += (_, _) => { if (endDate.Value.Date < date.Value.Date) endDate.Value = date.Value.Date; };
+        hasRepeat.CheckedChanged += (_, _) => { if (hasRepeat.Checked) hasDate.Checked = true; RefreshEnabled(); };
+        repeatMode.SelectedIndexChanged += (_, _) =>
+        { repeatValue.Maximum = repeatMode.SelectedIndex == 0 ? 3650 : 10000; RefreshRepeatHint(); };
+        repeatValue.ValueChanged += (_, _) => RefreshRepeatHint();
+        date.ValueChanged += (_, _) => { if (hasRepeat.Checked || endDate.Value.Date < date.Value.Date) endDate.Value = date.Value.Date; RefreshRepeatHint(); };
         unit.SelectedIndexChanged += (_, _) =>
         {
             var minutes = duration.Value * (previousUnit == 1 ? 60 : 1);
@@ -183,10 +210,61 @@ internal sealed class PlanEditor : Form
         panel.Controls.Add(layout); return (panel, layout);
     }
 
-    private static SurfacePanel Input(TextBox box, int height)
+    private static SurfacePanel Input(TextBox box, int height, bool grow = false)
     {
         var panel = new SurfacePanel { Height = height, Padding = new Padding(12, 10, 12, 10), BackColor = Theme.Canvas };
-        box.BackColor = Theme.Canvas; box.Dock = DockStyle.Fill; panel.Controls.Add(box); return panel;
+        box.BackColor = Theme.Canvas; box.Dock = DockStyle.Fill; panel.Controls.Add(box);
+        if (grow)
+        {
+            box.ScrollBars = ScrollBars.None;
+            var caretQueued = false;
+            var resizeQueued = false;
+            void KeepCaretVisible()
+            {
+                if (!box.Focused || !box.IsHandleCreated || caretQueued) return;
+                caretQueued = true;
+                box.BeginInvoke(() =>
+                {
+                    caretQueued = false;
+                    if (box.IsDisposed || !box.Focused) return;
+                    var parent = panel.Parent;
+                    while (parent is not null && parent is not Panel { AutoScroll: true }) parent = parent.Parent;
+                    if (parent is not Panel scroll) return;
+                    var caret = scroll.PointToClient(box.PointToScreen(box.GetPositionFromCharIndex(box.SelectionStart)));
+                    var bottom = caret.Y + box.Font.Height + Theme.Px(box, 8);
+                    if (bottom > scroll.ClientSize.Height)
+                        scroll.AutoScrollPosition = new Point(0, scroll.VerticalScroll.Value + bottom - scroll.ClientSize.Height);
+                    else if (caret.Y < 0)
+                        scroll.AutoScrollPosition = new Point(0, Math.Max(0, scroll.VerticalScroll.Value + caret.Y));
+                });
+            }
+            void ResizeInput()
+            {
+                if (box.IsDisposed || box.ClientSize.Width < 1) return;
+                var lines = box.IsHandleCreated ? box.GetLineFromCharIndex(box.TextLength) + 1 :
+                    Math.Max(1, TextRenderer.MeasureText(box.Text + " ", box.Font, new Size(box.ClientSize.Width, int.MaxValue),
+                        TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding).Height / box.Font.Height);
+                var desired = Math.Max(Theme.Px(panel, height), lines * box.Font.Height + Theme.Px(box, 6) + panel.Padding.Vertical);
+                if (panel.MinimumSize.Height != desired) panel.MinimumSize = new Size(0, desired);
+                if (panel.Height != desired) panel.Height = desired;
+                panel.PerformLayout();
+                KeepCaretVisible();
+            }
+            void RefreshInput()
+            {
+                ResizeInput();
+                if (!box.IsHandleCreated || resizeQueued) return;
+                resizeQueued = true;
+                box.BeginInvoke(() => { resizeQueued = false; if (!box.IsDisposed) ResizeInput(); });
+            }
+            box.TextChanged += (_, _) => RefreshInput();
+            box.SizeChanged += (_, _) => RefreshInput();
+            box.FontChanged += (_, _) => RefreshInput();
+            box.HandleCreated += (_, _) => RefreshInput();
+            box.KeyUp += (_, _) => KeepCaretVisible();
+            box.MouseUp += (_, _) => KeepCaretVisible();
+        }
+        return panel;
     }
 
     private static TableLayoutPanel Field(string caption, Control input)
@@ -199,10 +277,29 @@ internal sealed class PlanEditor : Form
 
     private void RefreshEnabled()
     {
+        if (hasRepeat.Checked) hasDate.Checked = true;
+        hasDate.Enabled = !hasRepeat.Checked;
         dateField.Visible = hasDate.Checked; hasSchedule.Enabled = hasDate.Checked;
         scheduleFields.Visible = hasDate.Checked && hasSchedule.Checked;
         start.Enabled = end.Enabled = endDate.Enabled = hasDate.Checked && hasSchedule.Checked;
+        endDateField.Visible = !hasRepeat.Checked;
         durationFields.Visible = hasDuration.Checked;
+        repeatFields.Visible = hasRepeat.Checked;
+        RefreshRepeatHint();
+    }
+
+    private void RefreshRepeatHint()
+    {
+        if (repeatMode.SelectedIndex == 0)
+        {
+            var begin = DateOnly.FromDateTime(date.Value);
+            var number = begin.DayNumber + (int)repeatValue.Value - 1;
+            repeatHint.Text = number <= new DateOnly(9998, 12, 31).DayNumber ?
+                $"从 {begin:yyyy/MM/dd} 开始，每天重复，至 {DateOnly.FromDayNumber(number):yyyy/MM/dd}（含当天）。到期自动结束，每天的完成记录会保留。" : "持续时间超出可用日期范围，请缩短天数。";
+        }
+        else repeatHint.Text = $"从安排日期开始，每天重复，累计完成 {repeatValue.Value:0} 次后结束。每天最多记录一次；未来日期到当天才可勾选。";
+        repeatHint.Text += " 每天的时间段须在同一天内。";
+        if (original.CompletionDates.Count > 0) repeatHint.Text += " 修改目标会保留已有记录；开始和结束日期须包含已完成的日期。";
     }
 
     private void RefreshColor()
@@ -226,8 +323,12 @@ internal sealed class PlanEditor : Form
                 Day = hasDate.Checked ? DateOnly.FromDateTime(date.Value) : null,
                 Start = scheduled ? TimeOnly.FromDateTime(start.Value) : null,
                 End = scheduled ? TimeOnly.FromDateTime(end.Value) : null,
-                EndDay = scheduled ? DateOnly.FromDateTime(endDate.Value) : null,
+                EndDay = scheduled ? DateOnly.FromDateTime(hasRepeat.Checked ? date.Value : endDate.Value) : null,
                 DurationMinutes = hasDuration.Checked ? (int)Math.Round(duration.Value * (unit.SelectedIndex == 1 ? 60 : 1), MidpointRounding.AwayFromZero) : null,
+                RepeatUntil = hasRepeat.Checked && repeatMode.SelectedIndex == 0 ? DateOnly.FromDateTime(date.Value).AddDays((int)repeatValue.Value - 1) : null,
+                RepeatCount = hasRepeat.Checked && repeatMode.SelectedIndex == 1 ? (int)repeatValue.Value : null,
+                CompletedDates = hasRepeat.Checked ? original.CompletedDates ?? (original.IsCompleted && original.Day is { } completed ? [completed] : null) : null,
+                IsCompleted = hasRepeat.Checked ? false : original.IsCompleted,
                 UpdatedAt = DateTimeOffset.Now
             };
             result.Validate(); Result = result;

@@ -45,9 +45,26 @@ internal static class UiCheck
         foreach (var checkbox in Descendants(editor).OfType<CheckBox>().Where(box => box.Text != "安排日期")) checkbox.Checked = false;
         scroller.AutoScrollPosition = Point.Empty; Application.DoEvents(); CheckText(editor);
         Capture(editor, Path.Combine(directory, "editor-simple.png"));
+        var title = Descendants(editor).OfType<TextBox>().Single(box => box.AccessibleName == "计划标题（必填）");
+        var compactHeight = title.Parent!.Height;
+        title.Text = string.Join("\r\n", Enumerable.Range(1, 14).Select(index => $"第 {index} 行：保留前面填写的内容")) + "\r\n";
+        title.SelectionStart = title.TextLength; title.Focus(); Application.DoEvents();
+        if (title.Parent.Height <= compactHeight || title.ClientSize.Height < (title.GetLineFromCharIndex(title.TextLength) + 1) * title.Font.Height)
+            throw new InvalidOperationException("Multiline title did not grow to fit its lines.");
+        var caret = scroller.PointToClient(title.PointToScreen(title.GetPositionFromCharIndex(title.SelectionStart)));
+        if (caret.Y < 0 || caret.Y + title.Font.Height > scroller.ClientSize.Height)
+            throw new InvalidOperationException("Growing title hides the active line outside the scroll viewport.");
+        CheckText(editor); Capture(editor, Path.Combine(directory, "editor-multiline.png"));
+        title.Text = new string('字', 490); Application.DoEvents();
+        var wideHeight = title.Parent.Height;
+        editor.ClientSize = new Size(Theme.Px(editor, 580), Theme.Px(editor, 460)); Application.DoEvents();
+        if (title.Parent.Height < wideHeight || title.ClientSize.Height < (title.GetLineFromCharIndex(title.TextLength) + 1) * title.Font.Height)
+            throw new InvalidOperationException($"Wrapped title does not fit after narrowing the editor: oldHeight={wideHeight}, height={title.Parent.Height}, input={title.ClientSize}, lines={title.GetLineFromCharIndex(title.TextLength) + 1}, fontHeight={title.Font.Height}.");
+        title.Text = sample.Title; Application.DoEvents();
+        if (title.Parent.Height > compactHeight + Theme.Px(title, 2)) throw new InvalidOperationException("Title field does not shrink after removing lines.");
+        editor.ClientSize = new Size(Theme.Px(editor, 720), Theme.Px(editor, 780));
         foreach (var checkbox in Descendants(editor).OfType<CheckBox>()) checkbox.Checked = true;
         Application.DoEvents(); CheckText(editor);
-        var title = Descendants(editor).OfType<TextBox>().Single(box => box.AccessibleName == "计划标题（必填）");
         title.Text = " "; editor.SavePlan(); Application.DoEvents(); CheckText(editor);
         if (editor.Result is not null) throw new InvalidOperationException("Blank editor title was accepted.");
         editor.Close();
@@ -62,6 +79,15 @@ internal static class UiCheck
         store.Save(sample with { Title = new string('长', 500), Notes = new string('备', 5000), EndDay = day.AddDays(1), End = new TimeOnly(10, 30), DurationMinutes = 525600 });
         main.RefreshViews(); Application.DoEvents(); CheckText(main);
         if (main.PlanList.HorizontalScroll.Visible) throw new InvalidOperationException("Long content creates horizontal scrolling.");
+        var recurring = new PlanItem { Title = "每天学习，积累一点进步", Day = day.AddDays(-4), RepeatCount = 10,
+            CompletedDates = [day.AddDays(-4), day.AddDays(-2)], Color = Palette.Colors[2], DurationMinutes = 30 };
+        store.Save(recurring);
+        main.ClientSize = new Size(Theme.Px(main, 1180), Theme.Px(main, 780)); main.ShowLongTerm(); Application.DoEvents(); CheckText(main);
+        Capture(main, Path.Combine(directory, "long-term.png"));
+        using var repeatEditor = new PlanEditor(recurring, false); repeatEditor.Show(main); Application.DoEvents(); CheckText(repeatEditor);
+        var repeatScroll = Descendants(repeatEditor).OfType<Panel>().Single(panel => panel.AutoScroll);
+        repeatScroll.AutoScrollPosition = new Point(0, repeatScroll.VerticalScroll.Maximum); Application.DoEvents(); CheckText(repeatEditor);
+        Capture(repeatEditor, Path.Combine(directory, "editor-long-term.png")); repeatEditor.Close();
         var settings = new AppSettings(Path.GetDirectoryName(store.FilePath)!);
         using var settingsForm = new SettingsForm(settings); settingsForm.Show(main); Application.DoEvents(); CheckText(settingsForm);
         Capture(settingsForm, Path.Combine(directory, "settings.png"));

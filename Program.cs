@@ -5,6 +5,7 @@ namespace PlanReminder;
 
 internal static class Program
 {
+    internal static string AppVersion => typeof(Program).Assembly.GetName().Version!.ToString(3);
     [STAThread]
     private static int Main(string[] args)
     {
@@ -40,7 +41,7 @@ internal static class Program
         {
             openRequest.Set();
             if (createdOpenRequest)
-                MessageBox.Show("计划表已在运行。如果窗口没有恢复，请先退出正在运行的版本后重试。", "计划表", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"计划表 v{AppVersion} 无法接管正在运行的旧版。请先关闭旧版窗口，再启动此版本。新版主窗口标题会显示版本号。", "请先退出旧版计划表", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
         try
