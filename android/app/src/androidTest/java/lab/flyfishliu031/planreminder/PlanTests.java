@@ -487,6 +487,19 @@ public class PlanTests {
       scenario.onActivity(
           a -> {
             View decor = a.editor.dialog.getWindow().getDecorView();
+            EditText title =
+                inputs(decor).stream()
+                    .filter(v -> v.getContentDescription().toString().startsWith("计划内容"))
+                    .findFirst()
+                    .get();
+            if (decor.hasWindowFocus()) {
+              title.requestFocus();
+              if (Build.VERSION.SDK_INT >= 30 && title.getWindowInsetsController() != null)
+                title.getWindowInsetsController().show(WindowInsets.Type.ime());
+              else
+                ((InputMethodManager) a.getSystemService(Context.INPUT_METHOD_SERVICE))
+                    .showSoftInput(title, InputMethodManager.SHOW_IMPLICIT);
+            }
             if (Build.VERSION.SDK_INT >= 30)
               visible[0] =
                   decor.getRootWindowInsets() != null
@@ -504,6 +517,7 @@ public class PlanTests {
       }
       SystemClock.sleep(100);
     }
+    capture("keyboard-failure.png");
     fail("Keyboard did not open");
   }
 

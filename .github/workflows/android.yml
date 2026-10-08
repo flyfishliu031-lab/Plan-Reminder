@@ -41,7 +41,8 @@ jobs:
           script: |
             adb shell settings put system system_locales zh-CN
             adb shell settings put secure show_ime_with_hard_keyboard 1
-            gradle -p android --no-daemon --max-workers=2 connectedDebugAndroidTest
+            mkdir -p artifacts/android-screenshots
+            gradle -p android --no-daemon --max-workers=2 connectedDebugAndroidTest || { adb pull /sdcard/Android/data/lab.flyfishliu031.planreminder/files/screenshots artifacts/android-screenshots; exit 1; }
             # Gradle cleans the installed app after device tests. Reinstall only to collect UI previews.
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
