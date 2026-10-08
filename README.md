@@ -38,6 +38,14 @@
 - 安卓系统可能要求允许当前浏览器或文件管理器安装此 APK，可按系统提示为该来源允许安装。本项目提供直接安装的 APK，未上架应用商店。
 - 升级安装相同签名的新版会保留本机计划；**卸载安卓应用会删除其本机数据，请先导出备份**。应用不请求网络、通知或广泛文件访问权限，导入导出通过系统文件选择器完成。
 
+以下为 Android 模拟器中的示例计划，截图只包含演示数据：
+
+![安卓主界面](assets/android-main.png)
+
+![安卓完成计划](assets/android-completed.png)
+
+![安卓编辑计划](assets/android-editor.png)
+
 ### 安卓源码构建
 
 使用 JDK 17、Gradle 8.13、Android SDK API 36 / Build Tools 35.0.0，原生 Java 和 Android 控件，无额外运行时依赖。
