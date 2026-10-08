@@ -8,3 +8,4 @@ artifacts/
 *.user
 *.tmp
 plans*.json
+settings.json

@@ -6,6 +6,11 @@ namespace PlanReminder;
 internal sealed class MainForm : Form
 {
     private readonly PlanStore store;
+    private readonly AppSettings settings;
+    private readonly NotifyIcon tray = new() { Icon = Theme.AppIcon, Text = "计划表" };
+    private readonly ContextMenuStrip trayMenu = new() { Font = Theme.Body };
+    private bool exitRequested;
+    private bool trayHintShown;
     private readonly CalendarView calendar = new();
     private readonly Label heading = Theme.Label("", Theme.Heading);
     private readonly Label summary = Theme.Label("", Theme.Small, Theme.Muted);
@@ -24,12 +29,14 @@ internal sealed class MainForm : Form
     private PlanItem? deleted;
     internal CalendarView Calendar => calendar;
     internal FlowLayoutPanel PlanList => list;
+    internal NotifyIcon TrayIcon => tray;
 
-    public MainForm(PlanStore data)
+    public MainForm(PlanStore data, AppSettings? preferences = null)
     {
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
         store = data;
+        settings = preferences ?? new AppSettings(Path.GetDirectoryName(data.FilePath)!);
         Text = "计划表"; Font = Theme.Body; BackColor = Theme.Canvas; ForeColor = Theme.Ink;
         ClientSize = new Size(1180, 780); MinimumSize = new Size(840, 500);
         StartPosition = FormStartPosition.CenterScreen;
@@ -41,6 +48,14 @@ internal sealed class MainForm : Form
         root.Controls.Add(BuildSidebar(), 0, 0);
         root.Controls.Add(BuildContent(), 1, 0);
         Controls.Add(root);
+        trayMenu.Items.Add("打开计划表", null, (_, _) => RestoreWindow());
+        trayMenu.Items.Add("设置", null, (_, _) => OpenSettings());
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("退出程序", null, (_, _) => RequestExit());
+        tray.ContextMenuStrip = trayMenu;
+        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) RestoreWindow(); };
+        tray.DoubleClick += (_, _) => RestoreWindow();
+        Shown += (_, _) => tray.Visible = true;
         calendar.DateSelected += day => SelectDate(day);
         unscheduled.Click += (_, _) => { selectedDay = null; RefreshViews(); };
         list.SizeChanged += (_, _) => ResizeCards();
@@ -95,16 +110,20 @@ internal sealed class MainForm : Form
         var goToday = Theme.Button("回到今天");
         goToday.Click += (_, _) => SelectDate(DateOnly.FromDateTime(DateTime.Now));
         Row(goToday, 10); Row(unscheduled, 28);
-        Row(Theme.Label("本机数据", Theme.Small, Theme.Muted), 12);
-        var backups = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-        backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        Row(Theme.Label("数据与设置", Theme.Small, Theme.Muted), 12);
+        var backups = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty };
+        backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36)); backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
+        backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28));
         backups.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var export = Theme.Button("导出备份"); var import = Theme.Button("导入备份");
-        export.Dock = import.Dock = DockStyle.Top; export.Width = import.Width = 100;
-        export.Font = import.Font = Theme.Small; export.Padding = import.Padding = new Padding(4, 0, 4, 0);
-        export.Margin = new Padding(0, 0, 4, 0); import.Margin = new Padding(4, 0, 0, 0);
+        var configure = Theme.Button("设置"); configure.Width = 56; configure.AccessibleName = "打开设置";
+        export.Dock = import.Dock = configure.Dock = DockStyle.Top; export.Width = import.Width = 64;
+        export.Font = import.Font = configure.Font = Theme.Small;
+        export.Padding = import.Padding = configure.Padding = new Padding(4, 0, 4, 0);
+        export.Margin = new Padding(0, 0, 4, 0); import.Margin = new Padding(4, 0, 4, 0); configure.Margin = new Padding(4, 0, 0, 0);
         export.Click += (_, _) => Export(); import.Click += (_, _) => Import();
-        backups.Controls.Add(export, 0, 0); backups.Controls.Add(import, 1, 0);
+        configure.Click += (_, _) => OpenSettings();
+        backups.Controls.Add(export, 0, 0); backups.Controls.Add(import, 1, 0); backups.Controls.Add(configure, 2, 0);
         var dataHint = new LinkLabel
         {
             Text = "已自动保存 · 打开数据目录", Font = Theme.Small, AutoSize = true,
@@ -284,9 +303,41 @@ internal sealed class MainForm : Form
         if (date != today) { today = date; calendar.SetData(store.Plans, selectedDay); }
     }
 
+    internal void RestoreWindow()
+    {
+        if (IsDisposed) return;
+        Show(); ShowInTaskbar = true;
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Theme.FitWindow(this); Activate();
+        OwnedForms.FirstOrDefault(form => form.Visible)?.Activate();
+    }
+
+    private void OpenSettings()
+    {
+        RestoreWindow();
+        if (OwnedForms.Any(form => form.Visible)) return;
+        using var dialog = new SettingsForm(settings); dialog.ShowDialog(this);
+    }
+
+    internal void RequestExit() { exitRequested = true; Close(); }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (e.CloseReason == CloseReason.UserClosing && !exitRequested && !settings.ExitOnClose)
+        {
+            e.Cancel = true; Hide();
+            if (!trayHintShown && tray.Visible && Application.MessageLoop)
+            {
+                trayHintShown = true;
+                tray.ShowBalloonTip(3000, "计划表已在后台运行", "点击托盘图标重新打开，右键菜单可退出程序。", ToolTipIcon.Info);
+            }
+        }
+        base.OnFormClosing(e);
+    }
+
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { systemTimer.Dispose(); undoTimer.Dispose(); }
+        if (disposing) { tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); systemTimer.Dispose(); undoTimer.Dispose(); }
         base.Dispose(disposing);
     }
 }

@@ -62,6 +62,16 @@ internal static class UiCheck
         store.Save(sample with { Title = new string('长', 500), Notes = new string('备', 5000), EndDay = day.AddDays(1), End = new TimeOnly(10, 30), DurationMinutes = 525600 });
         main.RefreshViews(); Application.DoEvents(); CheckText(main);
         if (main.PlanList.HorizontalScroll.Visible) throw new InvalidOperationException("Long content creates horizontal scrolling.");
+        var settings = new AppSettings(Path.GetDirectoryName(store.FilePath)!);
+        using var settingsForm = new SettingsForm(settings); settingsForm.Show(main); Application.DoEvents(); CheckText(settingsForm);
+        Capture(settingsForm, Path.Combine(directory, "settings.png"));
+        settingsForm.ClientSize = new Size(Theme.Px(settingsForm, 420), Theme.Px(settingsForm, 300));
+        Application.DoEvents(); CheckText(settingsForm);
+        settingsForm.Close();
+        var blockedSettings = new AppSettings(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "blocked"));
+        Directory.CreateDirectory(blockedSettings.FilePath);
+        using var errorForm = new SettingsForm(blockedSettings); errorForm.Show(main); errorForm.SaveSettings();
+        Application.DoEvents(); CheckText(errorForm); errorForm.Close();
         Console.WriteLine($"UI checks passed. Device DPI: {main.DeviceDpi}; previews: {Path.GetFullPath(directory)}");
     }
 

@@ -98,6 +98,55 @@ internal static class SelfTest
         scheduledEditor.SavePlan();
         Check(scheduledEditor.Result is { } scheduledPlan && scheduledPlan.Title == "修改后的跨天计划" && scheduledPlan.StartsAt == crossDay.StartsAt && scheduledPlan.EndsAt == crossDay.EndsAt,
             "editor saves edited title and retains cross-day schedule");
+
+        var settings = new AppSettings(Path.Combine(root, "settings")); settings.Load();
+        Check(!settings.ExitOnClose && !File.Exists(settings.FilePath), "first launch defaults to close-to-tray without writing settings");
+        settings.Save(true);
+        var savedSettings = new AppSettings(Path.Combine(root, "settings")); savedSettings.Load();
+        Check(savedSettings.ExitOnClose, "close-exit preference survives restart");
+        settings.Save(false); savedSettings.Load();
+        Check(!savedSettings.ExitOnClose, "close-exit preference can be disabled");
+        using (var cancelledSettings = new SettingsForm(settings))
+        {
+            Descendants(cancelledSettings).OfType<CheckBox>().Single().Checked = true;
+            cancelledSettings.Close();
+        }
+        Check(!settings.ExitOnClose, "cancelling settings leaves current preference unchanged");
+        using (var settingsDialog = new SettingsForm(settings))
+        {
+            Descendants(settingsDialog).OfType<CheckBox>().Single().Checked = true;
+            settingsDialog.SaveSettings();
+        }
+        savedSettings.Load();
+        Check(settings.ExitOnClose && savedSettings.ExitOnClose, "settings dialog saves and immediately applies preference");
+        var storedSettings = File.ReadAllText(settings.FilePath);
+        File.WriteAllText(settings.FilePath, "{\"exitOnClose\":\"invalid\"}");
+        Reject(settings.Load, "invalid settings rejected");
+        Check(settings.ExitOnClose, "failed settings load does not change current preference");
+        File.WriteAllText(settings.FilePath, storedSettings);
+        var blockedSettings = new AppSettings(Path.Combine(root, "blocked-settings")); Directory.CreateDirectory(blockedSettings.FilePath);
+        Reject(() => blockedSettings.Save(true), "settings write failure surfaced");
+        Check(!blockedSettings.ExitOnClose, "failed settings save does not apply unpersisted preference");
+
+        settings.Save(false);
+        var plansBeforeClosing = File.ReadAllText(uiStore.FilePath);
+        using var trayForm = new MainForm(uiStore, settings);
+        trayForm.Show(); Application.DoEvents();
+        Check(trayForm.TrayIcon.Visible && trayForm.TrayIcon.Icon is not null && trayForm.TrayIcon.ContextMenuStrip!.Items.Cast<ToolStripItem>().Any(item => item.Text == "设置"),
+            "running window registers tray icon with settings menu");
+        trayForm.Close(); Application.DoEvents();
+        Check(!trayForm.IsDisposed && !trayForm.Visible && trayForm.TrayIcon.Visible, "default close hides window and retains tray icon");
+        trayForm.TrayIcon.ContextMenuStrip!.Items[0].PerformClick(); Application.DoEvents();
+        Check(trayForm.Visible, "tray open action restores hidden window");
+        trayForm.WindowState = FormWindowState.Minimized; trayForm.RestoreWindow();
+        Check(trayForm.WindowState == FormWindowState.Normal, "restoring from tray also restores a minimized window");
+        trayForm.Close();
+        trayForm.TrayIcon.ContextMenuStrip!.Items.Cast<ToolStripItem>().Single(item => item.Text == "退出程序").PerformClick();
+        Check(trayForm.IsDisposed && !trayForm.TrayIcon.Visible, "tray exit closes hidden window and removes icon");
+        settings.Save(true);
+        using var exitForm = new MainForm(uiStore, settings); exitForm.Show(); exitForm.Close();
+        Check(exitForm.IsDisposed && !exitForm.TrayIcon.Visible, "enabled close-exit preference closes program and removes icon");
+        Check(File.ReadAllText(uiStore.FilePath) == plansBeforeClosing, "close and exit paths preserve stored plans");
         Console.WriteLine($"All {checks} checks passed. Test data: {root}");
     }
 }

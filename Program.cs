@@ -34,10 +34,13 @@ internal static class Program
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PlanReminder");
         var store = new PlanStore(directory);
         var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(store.FilePath.ToUpperInvariant())))[..24];
+        using var openRequest = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\PlanReminder-Open-" + identity, out var createdOpenRequest);
         using var mutex = new Mutex(true, "Local\\PlanReminder-" + identity, out var firstInstance);
         if (!firstInstance)
         {
-            MessageBox.Show("计划表已在运行，请切换到已有窗口。", "计划表", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            openRequest.Set();
+            if (createdOpenRequest)
+                MessageBox.Show("计划表已在运行。如果窗口没有恢复，请先退出正在运行的版本后重试。", "计划表", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
         try
@@ -57,7 +60,18 @@ internal static class Program
                 }
             }
             if (args.Contains("--demo") && !File.Exists(store.FilePath)) AddDemoPlans(store);
-            Application.Run(new MainForm(store));
+            var settings = new AppSettings(directory);
+            string? settingsError = null;
+            try { settings.Load(); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException)
+            { settingsError = ex.Message; }
+            using var main = new MainForm(store, settings);
+            if (settingsError is not null)
+                main.Shown += (_, _) => MessageBox.Show(main, $"无法读取设置，暂按默认方式运行。可在设置中重新保存。\n\n{settingsError}", "设置读取失败", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            using var activationTimer = new System.Windows.Forms.Timer { Interval = 250 };
+            activationTimer.Tick += (_, _) => { if (openRequest.WaitOne(0)) main.RestoreWindow(); };
+            activationTimer.Start();
+            Application.Run(main);
             return 0;
         }
         catch (Exception ex)
