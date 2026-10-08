@@ -39,13 +39,23 @@ public class PlanTests {
       }
     }
     assertTrue(AlarmScheduler.exactAllowed(c));
+    if (Build.VERSION.SDK_INT >= 34) {
+      try (ParcelFileDescriptor fd =
+          inst.getUiAutomation()
+              .executeShellCommand(
+                  "appops set " + c.getPackageName() + " USE_FULL_SCREEN_INTENT allow")) {
+        try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(fd)) {
+          while (in.read() != -1) {}
+        }
+      }
+    }
     Plan p = new Plan();
     p.title = "后台测试闹钟";
     p.alarm = new PlanAlarm();
     p.alarm.afterMinutes = 1;
     p.alarm.at = Instant.now().plusSeconds(3);
-    p.alarm.sound = false;
-    p.alarm.vibrate = false;
+    p.alarm.sound = true;
+    p.alarm.vibrate = true;
     p.validate();
     assertEquals(p.alarm.at, p.alarm.next(p, Instant.now()));
     assertNull(p.alarm.next(p.toggle(LocalDate.now()), Instant.now()));
@@ -74,11 +84,24 @@ public class PlanTests {
     store.save(p);
     AlarmScheduler.sync(c, store);
     assertNotNull(c.getSystemService(android.app.AlarmManager.class).getNextAlarmClock());
+    try (ParcelFileDescriptor fd =
+        inst.getUiAutomation().executeShellCommand("input keyevent 223")) {
+      try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(fd)) {
+        while (in.read() != -1) {}
+      }
+    }
     long limit = SystemClock.elapsedRealtime() + 15000;
     while (!AlarmService.running && SystemClock.elapsedRealtime() < limit) SystemClock.sleep(100);
     assertTrue(
         "Real AlarmManager alarm must start background ringing service", AlarmService.running);
-    SystemClock.sleep(400);
+    long wakeLimit = SystemClock.elapsedRealtime() + 5000;
+    while (!c.getSystemService(PowerManager.class).isInteractive()
+        && SystemClock.elapsedRealtime() < wakeLimit) SystemClock.sleep(100);
+    assertTrue(
+        "Locked-screen alarm must wake the screen",
+        c.getSystemService(PowerManager.class).isInteractive());
+    SystemClock.sleep(600);
+    capture("android-ringing.png");
     assertTrue(
         Arrays.stream(
                 c.getSystemService(android.app.NotificationManager.class).getActiveNotifications())
