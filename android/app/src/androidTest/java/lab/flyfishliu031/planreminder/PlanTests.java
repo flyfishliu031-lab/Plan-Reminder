@@ -100,7 +100,21 @@ public class PlanTests {
     assertTrue(
         "Locked-screen alarm must wake the screen",
         c.getSystemService(PowerManager.class).isInteractive());
-    SystemClock.sleep(600);
+    long screenLimit = SystemClock.elapsedRealtime() + 8000;
+    boolean rendered = false;
+    while (SystemClock.elapsedRealtime() < screenLimit) {
+      android.view.accessibility.AccessibilityNodeInfo node =
+          inst.getUiAutomation().getRootInActiveWindow();
+      if (node != null
+          && c.getPackageName().contentEquals(node.getPackageName())
+          && !node.findAccessibilityNodeInfosByText("关闭闹钟").isEmpty()) {
+        rendered = true;
+        break;
+      }
+      SystemClock.sleep(100);
+    }
+    assertTrue("Lock screen must display the alarm title and stop button", rendered);
+    SystemClock.sleep(300);
     capture("android-ringing.png");
     assertTrue(
         Arrays.stream(

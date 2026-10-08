@@ -72,9 +72,11 @@ public final class AlarmService extends Service {
         ringing.put(p.id, p);
         dates.put(
             p.id,
-            Instant.parse(intent.getStringExtra("occurrence"))
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate());
+            p.alarm.mode.equals("after")
+                ? LocalDate.now()
+                : Instant.parse(intent.getStringExtra("occurrence"))
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate());
         handler.removeCallbacksAndMessages(null);
         handler.postDelayed(this::stopSelf, 60000);
       } catch (Exception e) {

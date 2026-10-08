@@ -318,9 +318,9 @@ internal sealed class MainForm : Form
         var offset = TimeZoneInfo.Local.GetUtcOffset(now);
         var sign = offset < TimeSpan.Zero ? "−" : "+";
         clock.Text = $"系统时间  ·  {now:yyyy/MM/dd  HH:mm:ss}   (UTC{sign}{offset.Duration():hh\\:mm})";
-        if (Application.MessageLoop) CheckAlarms();
         var date = DateOnly.FromDateTime(now);
         if (date != today) { today = date; RefreshViews(); }
+        if (Application.MessageLoop) CheckAlarms();
     }
 
     internal void RestoreWindow()
