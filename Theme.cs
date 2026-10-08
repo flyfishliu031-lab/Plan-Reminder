@@ -86,7 +86,7 @@ internal sealed class RoundedButton : Button
         if (!Enabled) background = Theme.Canvas;
         else if ((hovered || pressed) && Text.Length > 0)
             background = BackColor == Theme.Accent ? ColorTranslator.FromHtml(pressed ? "#0C5148" : "#105D53") : Theme.SoftAccent;
-        e.Graphics.Clear(Parent is PlanCard ? Color.White : Parent?.BackColor ?? Theme.Canvas);
+        e.Graphics.Clear(Parent is PlanCard card ? card.SurfaceColor : Parent?.BackColor ?? Theme.Canvas);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var path = Theme.Round(new Rectangle(1, 1, Width - 3, Height - 3), Theme.Px(this, Text.Length == 0 ? 8 : 10));
         using var fill = new SolidBrush(background); e.Graphics.FillPath(fill, path);

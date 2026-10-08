@@ -9,3 +9,9 @@ artifacts/
 *.tmp
 plans*.json
 settings.json
+**/.gradle/
+android/**/build/
+android/local.properties
+.signing/
+*.jks
+*.keystore

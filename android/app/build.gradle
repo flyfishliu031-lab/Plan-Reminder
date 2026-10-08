@@ -1,0 +1,27 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'lab.flyfishliu031.planreminder'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'lab.flyfishliu031.planreminder'
+        minSdk 26
+        targetSdk 36
+        versionCode 10400
+        versionName '1.4.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    // Signing material stays outside Git. CI builds debug tests; published APKs use the persistent release key.
+    if (System.getenv('PLAN_KEYSTORE')) {
+        signingConfigs {
+            release {
+                storeFile file(System.getenv('PLAN_KEYSTORE'))
+                storePassword System.getenv('PLAN_STORE_PASSWORD')
+                keyAlias 'planreminder'
+                keyPassword System.getenv('PLAN_STORE_PASSWORD')
+            }
+        }
+        buildTypes { release { signingConfig signingConfigs.release } }
+    }
+}
+dependencies { androidTestImplementation 'androidx.test:runner:1.7.0'; androidTestImplementation 'androidx.test:core:1.7.0'; androidTestImplementation 'junit:junit:4.13.2' }
