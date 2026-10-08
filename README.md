@@ -44,6 +44,10 @@
 
 实现遵循 [Android 系统闹钟文档](https://developer.android.com/develop/background-work/services/alarms)、[通知权限](https://developer.android.com/develop/ui/views/notifications/notification-permission)和[紧急通知](https://developer.android.com/develop/ui/views/notifications/build-notification#urgent-message)。
 
+![闹钟设置](assets/editor-alarm.png)
+
+![Windows 闹钟提醒](assets/alarm.png)
+
 ## 安卓使用
 
 - 主界面选择日期打开系统月历；“今天”回到系统当前日期，“待安排”显示没有日期的计划，“长期计划”查看全部重复计划及进度。

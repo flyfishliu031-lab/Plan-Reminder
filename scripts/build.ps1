@@ -23,6 +23,8 @@ Copy-Item -LiteralPath assets\settings.png -Destination artifacts\publish\assets
 Copy-Item -LiteralPath assets\long-term.png -Destination artifacts\publish\assets\long-term.png -Force
 Copy-Item -LiteralPath assets\editor-long-term.png -Destination artifacts\publish\assets\editor-long-term.png -Force
 Copy-Item -LiteralPath assets\editor-multiline.png -Destination artifacts\publish\assets\editor-multiline.png -Force
+Copy-Item -LiteralPath assets\editor-alarm.png -Destination artifacts\publish\assets\editor-alarm.png -Force
+Copy-Item -LiteralPath assets\alarm.png -Destination artifacts\publish\assets\alarm.png -Force
 Compress-Archive -LiteralPath artifacts\publish\PlanReminder.exe,artifacts\publish\README.md,artifacts\publish\assets -DestinationPath "artifacts\PlanReminder-$Version-Portable-x64.zip" -Force
 if (!$InnoCompiler) {
     $compilerCandidates = @('.build-tools\inno\ISCC.exe', 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe', 'C:\Program Files\Inno Setup 7\ISCC.exe')

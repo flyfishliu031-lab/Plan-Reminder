@@ -51,6 +51,8 @@ jobs:
             grep -q 'OK (1 test)' artifacts/android-screenshots/ui-check.txt
             adb shell am instrument -w -e class lab.flyfishliu031.planreminder.PlanTests#alarmSettingsLayout lab.flyfishliu031.planreminder.test/androidx.test.runner.AndroidJUnitRunner > artifacts/android-screenshots/alarm-ui-check.txt
             grep -q 'OK (1 test)' artifacts/android-screenshots/alarm-ui-check.txt
+            adb shell am instrument -w -e class lab.flyfishliu031.planreminder.PlanTests#alarmsPersistCancelAndRingInBackground lab.flyfishliu031.planreminder.test/androidx.test.runner.AndroidJUnitRunner > artifacts/android-screenshots/alarm-check.txt
+            grep -q 'OK (1 test)' artifacts/android-screenshots/alarm-check.txt
             adb pull /sdcard/Android/data/lab.flyfishliu031.planreminder/files/screenshots artifacts/android-screenshots
       - uses: actions/upload-artifact@v4
         if: always()
