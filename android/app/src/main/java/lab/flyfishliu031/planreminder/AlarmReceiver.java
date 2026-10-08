@@ -34,7 +34,7 @@ public final class AlarmReceiver extends BroadcastReceiver {
                       occurrence.equals(p.alarm.next(p, Instant.now()))
                           && !occurrence.isAfter(Instant.now().plusSeconds(2));
               }
-              if (due) {
+              if (due && AlarmScheduler.exactAllowed(c) && AlarmScheduler.notificationsAllowed(c)) {
                 Plan fired = p.copy();
                 fired.alarm.firedAt = occurrence;
                 store.save(fired);

@@ -132,13 +132,14 @@ public class PlanTests {
             p.alarm.at = Instant.now().plusSeconds(600);
             new EditorForm(a, p, null);
             ScrollView scroll = findScroll(a.editor.dialog.getWindow().getDecorView());
-            scroll.smoothScrollTo(0, a.dp(740));
-            checkSaveVisible(a);
+            scroll.post(() -> scroll.smoothScrollTo(0, a.dp(740)));
           });
       SystemClock.sleep(700);
-      capture("alarm-settings");
+      scenario.onActivity(this::checkSaveVisible);
+      capture("android-alarm-settings.png");
       scenario.recreate();
       waitReady(scenario);
+      SystemClock.sleep(500);
       scenario.onActivity(
           a -> {
             assertTrue(a.editor.snapshot().getBoolean("alarmEnabled"));
@@ -407,7 +408,7 @@ public class PlanTests {
                         .showSoftInput(title, InputMethodManager.SHOW_IMPLICIT),
                 350);
           });
-      Thread.sleep(1500);
+      waitKeyboard(scenario);
       scenario.onActivity(
           a -> {
             View decor = a.editor.dialog.getWindow().getDecorView();
@@ -454,6 +455,33 @@ public class PlanTests {
       Thread.sleep(100);
     }
     fail("Activity did not finish loading/saving");
+  }
+
+  private void waitKeyboard(ActivityScenario<MainActivity> scenario) throws Exception {
+    long end = SystemClock.elapsedRealtime() + 8000;
+    boolean[] visible = {false};
+    while (SystemClock.elapsedRealtime() < end) {
+      scenario.onActivity(
+          a -> {
+            View decor = a.editor.dialog.getWindow().getDecorView();
+            if (Build.VERSION.SDK_INT >= 30)
+              visible[0] =
+                  decor.getRootWindowInsets() != null
+                      && decor.getRootWindowInsets().isVisible(WindowInsets.Type.ime());
+            else {
+              Rect area = new Rect();
+              decor.getWindowVisibleDisplayFrame(area);
+              visible[0] =
+                  area.bottom < a.getResources().getDisplayMetrics().heightPixels - a.dp(150);
+            }
+          });
+      if (visible[0]) {
+        SystemClock.sleep(400);
+        return;
+      }
+      SystemClock.sleep(100);
+    }
+    fail("Keyboard did not open");
   }
 
   private List<EditText> inputs(View v) {
