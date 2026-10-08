@@ -20,6 +20,140 @@ import org.json.*;
 import org.junit.*;
 
 public class PlanTests {
+  @Test
+  public void alarmsPersistCancelAndRingInBackground() throws Exception {
+    Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+    Context c = inst.getTargetContext();
+    if (Build.VERSION.SDK_INT >= 33)
+      inst.getUiAutomation()
+          .grantRuntimePermission(
+              c.getPackageName(), android.Manifest.permission.POST_NOTIFICATIONS);
+    if (Build.VERSION.SDK_INT >= 31) {
+      try (ParcelFileDescriptor fd =
+          inst.getUiAutomation()
+              .executeShellCommand(
+                  "appops set " + c.getPackageName() + " SCHEDULE_EXACT_ALARM allow")) {
+        try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(fd)) {
+          while (in.read() != -1) {}
+        }
+      }
+    }
+    assertTrue(AlarmScheduler.exactAllowed(c));
+    Plan p = new Plan();
+    p.title = "后台测试闹钟";
+    p.alarm = new PlanAlarm();
+    p.alarm.afterMinutes = 1;
+    p.alarm.at = Instant.now().plusSeconds(3);
+    p.alarm.sound = false;
+    p.alarm.vibrate = false;
+    p.validate();
+    assertEquals(p.alarm.at, p.alarm.next(p, Instant.now()));
+    assertNull(p.alarm.next(p.toggle(LocalDate.now()), Instant.now()));
+    Plan wrong = p.copy();
+    wrong.alarm.afterMinutes = 0;
+    rejects(wrong::validate);
+    Plan schedule = sample();
+    schedule.day = LocalDate.now();
+    schedule.endDay = schedule.day;
+    schedule.start = LocalTime.of(23, 0);
+    schedule.end = LocalTime.of(23, 30);
+    schedule.alarm = new PlanAlarm();
+    schedule.alarm.mode = "end";
+    schedule.validate();
+    assertEquals(
+        schedule.day.atTime(schedule.end).atZone(ZoneId.systemDefault()).toInstant(),
+        schedule.alarm.next(
+            schedule, schedule.day.atStartOfDay(ZoneId.systemDefault()).toInstant()));
+    assertEquals(
+        schedule.day.plusDays(1).atTime(schedule.end).atZone(ZoneId.systemDefault()).toInstant(),
+        schedule.alarm.next(
+            schedule.toggle(schedule.day),
+            schedule.day.atStartOfDay(ZoneId.systemDefault()).toInstant()));
+    PlanStore store = MainActivity.appStore(c);
+    store.load();
+    store.save(p);
+    AlarmScheduler.sync(c, store);
+    assertNotNull(c.getSystemService(android.app.AlarmManager.class).getNextAlarmClock());
+    long limit = SystemClock.elapsedRealtime() + 15000;
+    while (!AlarmService.running && SystemClock.elapsedRealtime() < limit) SystemClock.sleep(100);
+    assertTrue(
+        "Real AlarmManager alarm must start background ringing service", AlarmService.running);
+    SystemClock.sleep(400);
+    assertTrue(
+        Arrays.stream(
+                c.getSystemService(android.app.NotificationManager.class).getActiveNotifications())
+            .anyMatch(n -> n.getId() == 501));
+    store.load();
+    Plan fired = store.all().stream().filter(plan -> plan.id.equals(p.id)).findFirst().get();
+    assertEquals(p.alarm.at, fired.alarm.firedAt);
+    assertNull(fired.alarm.next(fired, Instant.now()));
+    c.stopService(new Intent(c, AlarmService.class));
+    SystemClock.sleep(300);
+    assertFalse(AlarmService.running);
+    Plan future = p.copy();
+    future.id = UUID.randomUUID().toString();
+    future.alarm.at = Instant.now().plusSeconds(60);
+    store.save(future);
+    AlarmScheduler.sync(c, store);
+    store.save(future.toggle(LocalDate.now()));
+    AlarmScheduler.sync(c, store);
+    assertFalse(
+        c.getSharedPreferences("alarms", Context.MODE_PRIVATE)
+            .getStringSet("scheduled", Collections.emptySet())
+            .contains(future.id));
+    future.completed = false;
+    store.save(future);
+    AlarmScheduler.sync(c, store);
+    store.delete(future.id);
+    AlarmScheduler.sync(c, store);
+    assertFalse(
+        c.getSharedPreferences("alarms", Context.MODE_PRIVATE)
+            .getStringSet("scheduled", Collections.emptySet())
+            .contains(future.id));
+    store.delete(p.id);
+  }
+
+  @Test
+  public void alarmSettingsLayout() throws Exception {
+    try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            Plan p = new Plan();
+            p.title = "十分钟后休息一下";
+            p.day = LocalDate.now();
+            p.alarm = new PlanAlarm();
+            p.alarm.afterMinutes = 10;
+            p.alarm.at = Instant.now().plusSeconds(600);
+            new EditorForm(a, p, null);
+            ScrollView scroll = findScroll(a.editor.dialog.getWindow().getDecorView());
+            scroll.smoothScrollTo(0, a.dp(740));
+            checkSaveVisible(a);
+          });
+      SystemClock.sleep(700);
+      capture("alarm-settings");
+      scenario.recreate();
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            assertTrue(a.editor.snapshot().getBoolean("alarmEnabled"));
+            assertEquals("10", a.editor.snapshot().getString("alarmMinutes"));
+            checkSaveVisible(a);
+            a.editor.dialog.dismiss();
+          });
+    }
+  }
+
+  private ScrollView findScroll(View view) {
+    if (view instanceof ScrollView) return (ScrollView) view;
+    if (view instanceof ViewGroup)
+      for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+        ScrollView result = findScroll(((ViewGroup) view).getChildAt(i));
+        if (result != null) return result;
+      }
+    return null;
+  }
+
   private Plan sample() {
     Plan p = new Plan();
     p.title = "每天学习，积累一点进步";

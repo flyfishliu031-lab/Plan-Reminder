@@ -99,7 +99,7 @@ final class PlanStore {
     if (!(schema instanceof Number)
         || ((Number) schema).doubleValue() != ((Number) schema).intValue()) Plan.fail("备份版本无效。");
     int version = ((Number) schema).intValue();
-    if (version != 1 && version != 2) Plan.fail("不支持此备份版本。");
+    if (version != 1 && version != 2 && version != 3) Plan.fail("不支持此备份版本。");
     JSONArray a = doc.getJSONArray("plans");
     Set<String> ids = new HashSet<>();
     List<Plan> result = new ArrayList<>();
@@ -119,7 +119,7 @@ final class PlanStore {
     }
     byte[] data =
         new JSONObject()
-            .put("schemaVersion", 2)
+            .put("schemaVersion", 3)
             .put("plans", a)
             .toString(2)
             .getBytes(StandardCharsets.UTF_8);

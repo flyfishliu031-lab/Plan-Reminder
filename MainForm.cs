@@ -11,6 +11,8 @@ internal sealed class MainForm : Form
     private readonly ContextMenuStrip trayMenu = new() { Font = Theme.Body };
     private bool exitRequested;
     private bool trayHintShown;
+    private readonly List<AlarmWindow> alarms = [];
+    private readonly Dictionary<Guid, (DateTimeOffset At, long Stamp, TimeSpan Remaining)> countdowns = [];
     private readonly CalendarView calendar = new();
     private readonly Label heading = Theme.Label("", Theme.Heading);
     private readonly Label summary = Theme.Label("", Theme.Small, Theme.Muted);
@@ -316,6 +318,7 @@ internal sealed class MainForm : Form
         var offset = TimeZoneInfo.Local.GetUtcOffset(now);
         var sign = offset < TimeSpan.Zero ? "−" : "+";
         clock.Text = $"系统时间  ·  {now:yyyy/MM/dd  HH:mm:ss}   (UTC{sign}{offset.Duration():hh\\:mm})";
+        if (Application.MessageLoop) CheckAlarms();
         var date = DateOnly.FromDateTime(now);
         if (date != today) { today = date; RefreshViews(); }
     }
@@ -338,6 +341,36 @@ internal sealed class MainForm : Form
 
     internal void RequestExit() { exitRequested = true; Close(); }
 
+    private void CheckAlarms()
+    {
+        foreach (var window in alarms.ToArray()) {
+            var current = store.Plans.FirstOrDefault(p => p.Id == window.PlanId);
+            if (current?.Alarm is null || current.IsCompleteOn(window.Day) || current.SeriesFinished(today)) window.Close();
+        }
+        foreach (var plan in store.Plans.ToArray()) {
+            var now = DateTimeOffset.Now;
+            DateTimeOffset? candidate;
+            if (plan.Alarm?.Mode == "after") {
+                var alarm = plan.Alarm;
+                var at = alarm.At!.Value;
+                if (plan.IsCompleted || plan.SeriesFinished(today) || plan.IsRecurring && plan.IsCompleteOn(today) || alarm.FiredAt is { } fired && at <= fired) continue;
+                if (!countdowns.TryGetValue(plan.Id, out var anchor) || anchor.At != at) {
+                    anchor = (at, System.Diagnostics.Stopwatch.GetTimestamp(), at - now); countdowns[plan.Id] = anchor;
+                }
+                var remaining = anchor.Remaining - System.Diagnostics.Stopwatch.GetElapsedTime(anchor.Stamp);
+                candidate = remaining <= TimeSpan.Zero && remaining >= TimeSpan.FromMinutes(-5) ? at : null;
+            } else candidate = plan.Alarm?.Next(plan, now);
+            if (candidate is not { } due || plan.Alarm?.Mode != "after" && due > now) continue;
+            try { store.Save(plan with { Alarm = plan.Alarm! with { FiredAt = due } }); }
+            catch (IOException) { continue; }
+            catch (UnauthorizedAccessException) { continue; }
+            var window = new AlarmWindow(plan, due); alarms.Add(window);
+            window.FormClosed += (_, _) => { alarms.Remove(window); window.Dispose(); };
+            window.Show();
+        }
+        foreach (var id in countdowns.Keys.Where(id => !store.Plans.Any(p => p.Id == id && p.Alarm?.Mode == "after")).ToArray()) countdowns.Remove(id);
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (e.CloseReason == CloseReason.UserClosing && !exitRequested && !settings.ExitOnClose)
@@ -354,7 +387,7 @@ internal sealed class MainForm : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); systemTimer.Dispose(); undoTimer.Dispose(); }
+        if (disposing) { foreach (var window in alarms.ToArray()) window.Close(); tray.Visible = false; tray.Dispose(); trayMenu.Dispose(); systemTimer.Dispose(); undoTimer.Dispose(); }
         base.Dispose(disposing);
     }
 }

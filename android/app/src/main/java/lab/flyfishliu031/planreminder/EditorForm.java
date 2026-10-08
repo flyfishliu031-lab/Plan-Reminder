@@ -1,7 +1,10 @@
 package lab.flyfishliu031.planreminder;
 
 import android.app.*;
+import android.content.Intent;
 import android.graphics.Color;
+import android.media.RingtoneManager;
+import android.net.Uri;
 import android.os.*;
 import android.text.*;
 import android.view.*;
@@ -24,6 +27,12 @@ final class EditorForm {
   private LocalDate day, endDay;
   private LocalTime start, end;
   private String color;
+  private final CheckBox alarmEnabled, alarmSound, alarmVibrate, restartAlarm;
+  private final RadioButton alarmAfter, alarmStart, alarmEnd;
+  private final LinearLayout alarmFields, alarmAfterFields;
+  private final EditText alarmMinutes;
+  private final Button ringtoneButton;
+  private String ringtone;
 
   EditorForm(MainActivity activity, Plan plan, Bundle state) {
     a = activity;
@@ -173,6 +182,81 @@ final class EditorForm {
     field(durationFields, "预期时长（分钟）", duration);
     a.add(durationFields, a.text("预期时长可独立设置，无需时间段。", 14, MainActivity.MUTED), 8, 4);
     form.addView(durationFields);
+    alarmEnabled = checkbox("添加闹钟 · 可选", plan != null && plan.alarm != null);
+    a.add(form, alarmEnabled, 20, 0);
+    alarmFields = a.column();
+    RadioGroup alarmModes = new RadioGroup(a);
+    alarmAfter = new RadioButton(a);
+    alarmAfter.setText("一段时间后响起");
+    alarmStart = new RadioButton(a);
+    alarmStart.setText("计划开始时响起");
+    alarmEnd = new RadioButton(a);
+    alarmEnd.setText("计划结束时响起");
+    for (RadioButton radio : new RadioButton[] {alarmAfter, alarmStart, alarmEnd}) {
+      radio.setId(View.generateViewId());
+      radio.setMinHeight(a.dp(48));
+      alarmModes.addView(radio);
+    }
+    alarmModes.check(
+        plan != null && plan.alarm != null && plan.alarm.mode.equals("start")
+            ? alarmStart.getId()
+            : plan != null && plan.alarm != null && plan.alarm.mode.equals("end")
+                ? alarmEnd.getId()
+                : alarmAfter.getId());
+    alarmFields.addView(alarmModes);
+    alarmAfterFields = a.column();
+    alarmMinutes =
+        input(
+            "闹钟倒计时分钟数",
+            plan != null && plan.alarm != null && plan.alarm.afterMinutes != null
+                ? plan.alarm.afterMinutes.toString()
+                : "10",
+            6,
+            true);
+    field(alarmAfterFields, "多少分钟后响起", alarmMinutes);
+    restartAlarm = checkbox("保存时重新开始倒计时", false);
+    alarmAfterFields.addView(restartAlarm);
+    a.add(
+        alarmAfterFields,
+        a.text("保存后开始倒计时，无需时间段。长期计划的倒计时只响一次。编辑时保留原时间，也可勾选重新计时。", 14, MainActivity.MUTED),
+        8,
+        8);
+    alarmFields.addView(alarmAfterFields);
+    alarmSound = checkbox("播放铃声", plan == null || plan.alarm == null || plan.alarm.sound);
+    alarmVibrate = checkbox("震动", plan == null || plan.alarm == null || plan.alarm.vibrate);
+    ringtone = plan != null && plan.alarm != null ? plan.alarm.ringtone : null;
+    alarmFields.addView(alarmSound);
+    alarmFields.addView(alarmVibrate);
+    ringtoneButton = a.button("", false);
+    ringtoneButton.setOnClickListener(
+        v -> {
+          Intent picker =
+              new Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
+                  .putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
+                  .putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "选择闹钟铃声")
+                  .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                  .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                  .putExtra(
+                      RingtoneManager.EXTRA_RINGTONE_EXISTING_URI,
+                      ringtone == null
+                          ? RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                          : Uri.parse(ringtone));
+          try {
+            a.startActivityForResult(picker, 30);
+          } catch (android.content.ActivityNotFoundException e) {
+            a.error("当前系统没有铃声选择器，将使用系统默认闹钟铃声。");
+          }
+        });
+    a.add(alarmFields, ringtoneButton, 8, 8);
+    Button permissions = a.button("闹钟权限与通知", false);
+    permissions.setOnClickListener(v -> AlarmScheduler.permissions(a));
+    alarmFields.addView(permissions);
+    a.add(
+        alarmFields,
+        a.text("开始／结束闹钟需要时间段，长期计划每天提醒。响铃一分钟后自动停止，也可从通知中关闭；闹钟音量由手机系统设置。", 14, MainActivity.MUTED),
+        8,
+        8);
+    form.addView(alarmFields);
     LinearLayout colors = a.column();
     a.add(colors, a.text("计划颜色", 16, MainActivity.INK), 20, 8);
     for (int r = 0; r < 2; r++) {
@@ -266,6 +350,9 @@ final class EditorForm {
           update();
         });
     expected.setOnCheckedChangeListener((b, c) -> update());
+    alarmEnabled.setOnCheckedChangeListener((b, c) -> update());
+    alarmModes.setOnCheckedChangeListener((g, id) -> update());
+    alarmSound.setOnCheckedChangeListener((b, c) -> update());
     if (state != null) apply(state);
     update();
     dialog.setOnDismissListener(
@@ -317,6 +404,22 @@ final class EditorForm {
   }
 
   private void update() {
+    alarmFields.setVisibility(alarmEnabled.isChecked() ? View.VISIBLE : View.GONE);
+    alarmAfterFields.setVisibility(alarmAfter.isChecked() ? View.VISIBLE : View.GONE);
+    restartAlarm.setVisibility(
+        original != null && original.alarm != null && original.alarm.mode.equals("after")
+            ? View.VISIBLE
+            : View.GONE);
+    ringtoneButton.setEnabled(alarmSound.isChecked());
+    String toneName = "系统默认";
+    if (ringtone != null)
+      try {
+        android.media.Ringtone tone = RingtoneManager.getRingtone(a, Uri.parse(ringtone));
+        if (tone != null) toneName = tone.getTitle(a);
+      } catch (RuntimeException ignored) {
+        toneName = "所选铃声（不可用时使用默认）";
+      }
+    ringtoneButton.setText("铃声 · " + toneName);
     repeatFields.setVisibility(repeated.isChecked() ? View.VISIBLE : View.GONE);
     dateFields.setVisibility(dated.isChecked() ? View.VISIBLE : View.GONE);
     timeFields.setVisibility(scheduled.isChecked() ? View.VISIBLE : View.GONE);
@@ -353,6 +456,29 @@ final class EditorForm {
         } else p.repeatCount = value;
       }
       p.updatedAt = Instant.now();
+      p.alarm = null;
+      if (alarmEnabled.isChecked()) {
+        PlanAlarm alarm = new PlanAlarm();
+        alarm.mode = alarmAfter.isChecked() ? "after" : alarmStart.isChecked() ? "start" : "end";
+        alarm.afterMinutes = alarmAfter.isChecked() ? positive(alarmMinutes, "闹钟倒计时") : null;
+        if (alarm.afterMinutes != null && alarm.afterMinutes > 525600)
+          Plan.fail("闹钟倒计时最多 525600 分钟。");
+        boolean keep =
+            !restartAlarm.isChecked()
+                && original != null
+                && original.alarm != null
+                && original.alarm.mode.equals(alarm.mode)
+                && java.util.Objects.equals(original.alarm.afterMinutes, alarm.afterMinutes);
+        alarm.at =
+            alarmAfter.isChecked()
+                ? keep ? original.alarm.at : Instant.now().plusSeconds(alarm.afterMinutes * 60L)
+                : null;
+        alarm.firedAt = keep ? original.alarm.firedAt : null;
+        alarm.sound = alarmSound.isChecked();
+        alarm.vibrate = alarmVibrate.isChecked();
+        alarm.ringtone = ringtone;
+        p.alarm = alarm;
+      }
       p.validate();
       boolean overlap = a.store.all().stream().anyMatch(p::overlaps);
       if (overlap)
@@ -393,8 +519,16 @@ final class EditorForm {
     a.perform(
         () -> a.store.save(p),
         () -> {
-          a.toast("计划已保存");
+          a.toast(
+              p.alarm != null
+                      && (!AlarmScheduler.exactAllowed(a)
+                          || !AlarmScheduler.notificationsAllowed(a))
+                  ? "计划已保存；允许闹钟和通知权限后才能响铃"
+                  : "计划已保存");
           dialog.dismiss();
+          if (p.alarm != null
+              && (!AlarmScheduler.exactAllowed(a) || !AlarmScheduler.notificationsAllowed(a)))
+            AlarmScheduler.permissions(a);
         });
     a.handler.postDelayed(this::checkSaving, 100);
   }
@@ -432,10 +566,28 @@ final class EditorForm {
     s.putBoolean("expected", expected.isChecked());
     s.putBoolean("repeated", repeated.isChecked());
     s.putBoolean("days", days.isChecked());
+    s.putBoolean("alarmEnabled", alarmEnabled.isChecked());
+    s.putBoolean("alarmSound", alarmSound.isChecked());
+    s.putBoolean("alarmVibrate", alarmVibrate.isChecked());
+    s.putBoolean("restartAlarm", restartAlarm.isChecked());
+    s.putString(
+        "alarmMode", alarmAfter.isChecked() ? "after" : alarmStart.isChecked() ? "start" : "end");
+    s.putString("alarmMinutes", alarmMinutes.getText().toString());
+    s.putString("ringtone", ringtone);
     return s;
   }
 
   private void apply(Bundle s) {
+    alarmEnabled.setChecked(s.getBoolean("alarmEnabled"));
+    alarmSound.setChecked(s.getBoolean("alarmSound", true));
+    alarmVibrate.setChecked(s.getBoolean("alarmVibrate", true));
+    restartAlarm.setChecked(s.getBoolean("restartAlarm"));
+    String alarmMode = s.getString("alarmMode", "after");
+    if (alarmMode.equals("after")) alarmAfter.setChecked(true);
+    else if (alarmMode.equals("start")) alarmStart.setChecked(true);
+    else alarmEnd.setChecked(true);
+    alarmMinutes.setText(s.getString("alarmMinutes", "10"));
+    ringtone = s.getString("ringtone");
     title.setText(s.getString("title"));
     notes.setText(s.getString("notes"));
     duration.setText(s.getString("duration"));
@@ -462,5 +614,14 @@ final class EditorForm {
     } catch (Exception e) {
       a.error("草稿未能恢复：" + MainActivity.message(e));
     }
+  }
+
+  void ringtoneResult(Intent data) {
+    Uri uri =
+        Build.VERSION.SDK_INT >= 33
+            ? data.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri.class)
+            : data.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI);
+    ringtone = uri == null || RingtoneManager.isDefault(uri) ? null : uri.toString();
+    update();
   }
 }

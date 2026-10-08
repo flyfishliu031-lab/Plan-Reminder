@@ -1,4 +1,4 @@
-param([string]$InnoCompiler, [string]$Version = '1.4.0')
+param([string]$InnoCompiler, [string]$Version = '1.5.0')
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path $PSScriptRoot -Parent)
 $env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'

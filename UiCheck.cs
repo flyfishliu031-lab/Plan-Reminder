@@ -94,11 +94,37 @@ internal static class UiCheck
         settingsForm.ClientSize = new Size(Theme.Px(settingsForm, 420), Theme.Px(settingsForm, 300));
         Application.DoEvents(); CheckText(settingsForm);
         settingsForm.Close();
+        using var alarmEditor = new PlanEditor(sample with { Alarm = new PlanAlarm { AfterMinutes = 10, At = DateTimeOffset.Now.AddMinutes(10) } }, true);
+        alarmEditor.Show(main); Application.DoEvents();
+        var alarmScroll = Descendants(alarmEditor).OfType<Panel>().Single(panel => panel.AutoScroll);
+        var alarmBox = Descendants(alarmEditor).OfType<CheckBox>().Single(box => box.Text == "添加闹钟");
+        alarmScroll.AutoScrollPosition = new Point(0, alarmScroll.VerticalScroll.Maximum); Application.DoEvents(); CheckText(alarmEditor);
+        Capture(alarmEditor, Path.Combine(directory, "editor-alarm.png")); alarmEditor.Close();
+        using var alarmWindow = new AlarmWindow(sample with { Alarm = new PlanAlarm { Mode = "start", Sound = false } }, DateTimeOffset.Now);
+        alarmWindow.Show(); Application.DoEvents(); CheckText(alarmWindow);
+        Capture(alarmWindow, Path.Combine(directory, "alarm.png")); alarmWindow.Close();
         var blockedSettings = new AppSettings(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "blocked"));
         Directory.CreateDirectory(blockedSettings.FilePath);
         using var errorForm = new SettingsForm(blockedSettings); errorForm.Show(main); errorForm.SaveSettings();
         Application.DoEvents(); CheckText(errorForm); errorForm.Close();
-        Console.WriteLine($"UI checks passed. Device DPI: {main.DeviceDpi}; previews: {Path.GetFullPath(directory)}");
+        var due = DateTimeOffset.Now.AddSeconds(2);
+        var timed = new PlanItem { Title = "后台闹钟触发测试", Alarm = new PlanAlarm { AfterMinutes = 1, At = due, Sound = false } };
+        store.Save(timed); main.Hide();
+        var rang = false;
+        var deadline = DateTime.UtcNow.AddSeconds(8);
+        using var observer = new System.Windows.Forms.Timer { Interval = 100 };
+        observer.Tick += (_, _) => {
+            var window = Application.OpenForms.OfType<AlarmWindow>().FirstOrDefault(form => form.PlanId == timed.Id);
+            if (window is not null) {
+                rang = store.Plans.Single(p => p.Id == timed.Id).Alarm?.FiredAt == due;
+                Capture(window, Path.Combine(directory, "alarm-background.png"));
+                Descendants(window).OfType<Button>().Single(button => button.Text == "关闭闹钟").PerformClick();
+                Application.ExitThread();
+            } else if (DateTime.UtcNow >= deadline) Application.ExitThread();
+        };
+        observer.Start(); Application.Run(); observer.Stop();
+        if (!rang) throw new InvalidOperationException("Background alarm did not ring and persist its fired state.");
+        Console.WriteLine($"UI and actual background alarm checks passed. Device DPI: {main.DeviceDpi}; previews: {Path.GetFullPath(directory)}");
     }
 
     internal static void CheckText(Control root)

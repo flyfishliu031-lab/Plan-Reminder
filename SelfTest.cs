@@ -237,6 +237,34 @@ internal static class SelfTest
         using var exitForm = new MainForm(uiStore, settings); exitForm.Show(); exitForm.Close();
         Check(exitForm.IsDisposed && !exitForm.TrayIcon.Visible, "enabled close-exit preference closes program and removes icon");
         Check(File.ReadAllText(uiStore.FilePath) == plansBeforeClosing, "close and exit paths preserve stored plans");
+        var alarmNow = DateTimeOffset.Now;
+        var reminder = new PlanItem { Title = "十分钟后休息", Alarm = new PlanAlarm { AfterMinutes = 10, At = alarmNow.AddMinutes(10) } };
+        reminder.Validate();
+        Check(reminder.Alarm!.Next(reminder, alarmNow) == alarmNow.AddMinutes(10), "countdown is independent of dates and expected duration");
+        Check(reminder.Alarm.Next(reminder with { IsCompleted = true }, alarmNow) is null, "completed plan cancels countdown");
+        Check((reminder.Alarm with { FiredAt = reminder.Alarm.At }).Next(reminder, alarmNow) is null, "acknowledged alarm does not ring twice");
+        Check((reminder.Alarm with { At = alarmNow.AddMinutes(-6) }).Next(reminder, alarmNow) is null, "old missed countdown does not ring after restart or import");
+        Check((reminder.Alarm with { At = alarmNow.AddMinutes(-2) }).Next(reminder, alarmNow) is not null, "recent missed alarm can catch up");
+        Reject(() => (reminder with { Alarm = new PlanAlarm { AfterMinutes = 0, At = alarmNow } }).Validate(), "zero alarm delay rejected");
+        Reject(() => (reminder with { Alarm = new PlanAlarm { Mode = "start" } }).Validate(), "schedule alarm requires full time range");
+        Reject(() => (reminder with { Alarm = new PlanAlarm { Mode = "unknown" } }).Validate(), "unknown alarm mode rejected");
+        Reject(() => (reminder with { Alarm = reminder.Alarm with { Ringtone = "file:///private" } }).Validate(), "unsupported ringtone URI rejected");
+        var dailyAlarm = new PlanItem { Title = "每天学习提醒", Day = today, EndDay = today, Start = new TimeOnly(23, 0), End = new TimeOnly(23, 30), RepeatCount = 3, Alarm = new PlanAlarm { Mode = "start" } };
+        dailyAlarm.Validate();
+        var morning = new DateTimeOffset(today.ToDateTime(new TimeOnly(8, 0)), TimeZoneInfo.Local.GetUtcOffset(today.ToDateTime(new TimeOnly(8, 0))));
+        Check(dailyAlarm.Alarm!.Next(dailyAlarm, morning)?.LocalDateTime == today.ToDateTime(new TimeOnly(23, 0)), "daily alarm uses system local start time");
+        Check(dailyAlarm.Alarm.Next(dailyAlarm.ToggleOn(today), morning)?.LocalDateTime == today.AddDays(1).ToDateTime(new TimeOnly(23, 0)), "daily completion cancels today but retains next day alarm");
+        var crossAlarm = crossDay with { Alarm = new PlanAlarm { Mode = "end" } };
+        Check(crossAlarm.Alarm!.Next(crossAlarm, morning)?.LocalDateTime == today.AddDays(1).ToDateTime(new TimeOnly(1, 0)), "end alarm respects cross-day end date");
+        store.Save(reminder); reopened.Load();
+        Check(reopened.Plans.Single(p => p.Id == reminder.Id).Alarm == reminder.Alarm, "alarm deadline and settings survive restart");
+        store.Save(reminder with { Alarm = reminder.Alarm with { FiredAt = reminder.Alarm.At } }); reopened.Load();
+        Check(reopened.Plans.Single(p => p.Id == reminder.Id).Alarm!.Next(reminder, alarmNow) is null, "fired state survives process restart");
+        store.Export(backup); imported.Import(backup);
+        Check(imported.Plans.Any(p => p.Id == reminder.Id && p.Alarm is not null), "schema 3 backup retains alarm settings");
+        using var alarmEditor = new PlanEditor(reminder, false);
+        alarmEditor.SavePlan();
+        Check(alarmEditor.Result?.Alarm?.At == reminder.Alarm.At, "editing a countdown preserves its original deadline");
         Console.WriteLine($"All {checks} checks passed. Test data: {root}");
     }
 }

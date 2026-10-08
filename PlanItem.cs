@@ -13,6 +13,7 @@ public sealed record PlanItem
     public DateOnly? EndDay { get; init; }
     public TimeOnly? End { get; init; }
     public int? DurationMinutes { get; init; }
+    public PlanAlarm? Alarm { get; init; }
     public string Color { get; init; } = Palette.Colors[0];
     public bool IsCompleted { get; init; }
     public DateOnly? RepeatUntil { get; init; }
@@ -47,6 +48,7 @@ public sealed record PlanItem
             throw new ArgumentException("结束时间须晚于开始时间；跨天计划请调整结束日期。");
         if (DurationMinutes is <= 0 or > 525600)
             throw new ArgumentException("预期时长须在 1 分钟到 365 天之间。");
+        Alarm?.Validate(this);
         if (IsRecurring)
         {
             if (Day is null || RepeatUntil is not null && RepeatCount is not null)
@@ -112,6 +114,7 @@ public sealed record PlanItem
                 $"{Day:MM月dd日} {start:HH:mm} — {EndDay:MM月dd日} {end:HH:mm}");
         else parts.Add(Day is null ? "待安排" : "未设置时间段");
         if (DurationMinutes is { } minutes) parts.Add($"预计 {FormatDuration(minutes)}");
+        if (Alarm is { } alarm) parts.Add(alarm.Description);
         return string.Join("   ·   ", parts);
     }
 

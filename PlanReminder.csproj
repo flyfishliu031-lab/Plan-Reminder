@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>PlanReminder</AssemblyName>
     <RootNamespace>PlanReminder</RootNamespace>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Product>计划表</Product>
     <Description>离线 Windows 计划管理软件</Description>

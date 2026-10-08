@@ -22,8 +22,14 @@ public final class MainActivity extends Activity {
       LINE = Color.rgb(222, 231, 227),
       DANGER = Color.rgb(172, 65, 75);
   final Handler handler = new Handler(Looper.getMainLooper());
-  private static final ExecutorService io = Executors.newSingleThreadExecutor();
+  static final ExecutorService io = Executors.newSingleThreadExecutor();
   private static PlanStore sharedStore;
+
+  static synchronized PlanStore appStore(Context c) {
+    if (sharedStore == null) sharedStore = new PlanStore(c.getFilesDir());
+    return sharedStore;
+  }
+
   PlanStore store;
   LocalDate selected = LocalDate.now();
   int mode; // 0: selected date, 1: unscheduled, 2: long-term overview.
@@ -57,8 +63,7 @@ public final class MainActivity extends Activity {
       mode = state.getInt("mode");
       draft = state.getBundle("draft");
     }
-    if (sharedStore == null) sharedStore = new PlanStore(getFilesDir());
-    store = sharedStore;
+    store = appStore(this);
     root = column();
     root.setBackgroundColor(CANVAS);
     inset(root, getWindow());
@@ -77,6 +82,7 @@ public final class MainActivity extends Activity {
         () -> {
           try {
             store.load();
+            AlarmScheduler.sync(this, store);
             runOnUiThread(
                 () -> {
                   if (isDestroyed() || isFinishing()) return;
@@ -123,7 +129,10 @@ public final class MainActivity extends Activity {
     super.onResume();
     handler.removeCallbacks(tick);
     handler.post(tick);
-    if (ready) render();
+    if (ready) {
+      render();
+      io.execute(() -> AlarmScheduler.sync(this, store));
+    }
   }
 
   @Override
@@ -159,6 +168,14 @@ public final class MainActivity extends Activity {
     settings.setOnClickListener(v -> settings());
     top.addView(settings);
     body.addView(top);
+    if (store.all().stream()
+            .anyMatch(p -> p.alarm != null && !p.completed && !p.finished(LocalDate.now()))
+        && (!AlarmScheduler.exactAllowed(this) || !AlarmScheduler.notificationsAllowed(this))) {
+      Button warning = button("闹钟尚未启用 · 点此允许闹钟和通知权限", false);
+      warning.setTextColor(DANGER);
+      warning.setOnClickListener(v -> AlarmScheduler.permissions(this));
+      add(body, warning, 12, 4);
+    }
     clock =
         text(
             ZonedDateTime.now()
@@ -371,11 +388,12 @@ public final class MainActivity extends Activity {
     new AlertDialog.Builder(this)
         .setTitle("设置与备份")
         .setItems(
-            new String[] {"导出计划备份", "导入计划备份", "关于计划表"},
+            new String[] {"导出计划备份", "导入计划备份", "关于计划表", "闹钟权限与通知"},
             (d, w) -> {
-              if (w == 2)
+              if (w == 3) AlarmScheduler.permissions(this);
+              else if (w == 2)
                 new AlertDialog.Builder(this)
-                    .setTitle("计划表 · v1.4.0")
+                    .setTitle("计划表 · v1.5.0")
                     .setMessage(
                         "离线保存于本机，无需账号。\n\n"
                             + "每天重复的长期计划可按持续天数或完成次数结束。通过 JSON 备份与 Windows 版手动迁移；两台设备不会自动同步。\n\n"
@@ -399,6 +417,10 @@ public final class MainActivity extends Activity {
   @Override
   protected void onActivityResult(int request, int result, Intent data) {
     super.onActivityResult(request, result, data);
+    if (request == 30) {
+      if (result == RESULT_OK && data != null && editor != null) editor.ringtoneResult(data);
+      return;
+    }
     if (result != RESULT_OK || data == null || data.getData() == null) return;
     if (request == 10)
       perform(
@@ -431,6 +453,15 @@ public final class MainActivity extends Activity {
           .show();
   }
 
+  @Override
+  public void onRequestPermissionsResult(int request, String[] permissions, int[] grants) {
+    super.onRequestPermissionsResult(request, permissions, grants);
+    if (request == 20 && ready) {
+      io.execute(() -> AlarmScheduler.sync(this, store));
+      render();
+    }
+  }
+
   interface Work {
     void run() throws Exception;
   }
@@ -443,6 +474,7 @@ public final class MainActivity extends Activity {
         () -> {
           try {
             work.run();
+            AlarmScheduler.sync(this, store);
             runOnUiThread(
                 () -> {
                   if (isDestroyed()) return;

@@ -15,6 +15,13 @@ internal sealed class PlanEditor : Form
     private readonly NumericUpDown duration = new() { Minimum = 1, Maximum = 525600, Value = 60 };
     private readonly ComboBox unit = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly CheckBox hasRepeat = new() { Text = "设为长期计划（每天重复）", AutoSize = true };
+    private readonly CheckBox hasAlarm = new() { Text = "添加闹钟", AutoSize = true };
+    private readonly ComboBox alarmMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "闹钟方式" };
+    private readonly NumericUpDown alarmMinutes = new() { Minimum = 1, Maximum = 525600, Value = 10, AccessibleName = "闹钟倒计时分钟数" };
+    private readonly TableLayoutPanel alarmFields;
+    private readonly TableLayoutPanel alarmAfterField;
+    private readonly Label alarmHint = Theme.Label("", Theme.Small, Theme.Muted);
+    private readonly CheckBox restartAlarm = new() { Text = "保存时重新开始倒计时", AutoSize = true };
     private readonly ComboBox repeatMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "长期计划结束方式" };
     private readonly NumericUpDown repeatValue = new() { Minimum = 1, Maximum = 10000, Value = 30, AccessibleName = "长期计划目标数值" };
     private readonly Label repeatHint = Theme.Label("", Theme.Small, Theme.Muted);
@@ -124,6 +131,21 @@ internal sealed class PlanEditor : Form
         Add(repeat.Layout, repeatFields, 0);
         Add(body, repeat.Panel, 16);
 
+        var alarm = Section("闹钟提醒");
+        hasAlarm.Checked = item.Alarm is not null;
+        Add(alarm.Layout, hasAlarm, 8);
+        alarmFields = Stack();
+        alarmMode.Items.AddRange(["一段时间后响起", "计划开始时响起", "计划结束时响起"]);
+        alarmMode.SelectedIndex = item.Alarm?.Mode == "start" ? 1 : item.Alarm?.Mode == "end" ? 2 : 0;
+        alarmMinutes.Value = item.Alarm?.AfterMinutes ?? 10;
+        Add(alarmFields, Field("提醒方式", alarmMode), 12);
+        alarmAfterField = Field("多少分钟后响起", alarmMinutes);
+        Add(alarmFields, alarmAfterField, 8);
+        Add(alarmFields, restartAlarm, 8);
+        Add(alarmFields, alarmHint, 0);
+        Add(alarm.Layout, alarmFields, 0);
+        Add(body, alarm.Panel, 16);
+
         var colorSection = Section("计划颜色");
         Add(colorSection.Layout, Theme.Label("用颜色区分计划，划去后仍保留原色。", Theme.Small, Theme.Muted), 12);
         var colors = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, WrapContents = true, Margin = Padding.Empty };
@@ -167,6 +189,8 @@ internal sealed class PlanEditor : Form
         hasSchedule.CheckedChanged += (_, _) => RefreshEnabled();
         hasDuration.CheckedChanged += (_, _) => RefreshEnabled();
         hasRepeat.CheckedChanged += (_, _) => { if (hasRepeat.Checked) hasDate.Checked = true; RefreshEnabled(); };
+        hasAlarm.CheckedChanged += (_, _) => RefreshEnabled();
+        alarmMode.SelectedIndexChanged += (_, _) => RefreshEnabled();
         repeatMode.SelectedIndexChanged += (_, _) =>
         { repeatValue.Maximum = repeatMode.SelectedIndex == 0 ? 3650 : 10000; RefreshRepeatHint(); };
         repeatValue.ValueChanged += (_, _) => RefreshRepeatHint();
@@ -285,6 +309,13 @@ internal sealed class PlanEditor : Form
         endDateField.Visible = !hasRepeat.Checked;
         durationFields.Visible = hasDuration.Checked;
         repeatFields.Visible = hasRepeat.Checked;
+        alarmFields.Visible = hasAlarm.Checked;
+        alarmAfterField.Visible = alarmMode.SelectedIndex == 0;
+        restartAlarm.Visible = alarmMode.SelectedIndex == 0 && original.Alarm?.Mode == "after";
+        alarmHint.Text = alarmMode.SelectedIndex == 0 ?
+            "保存后开始倒计时，无需时间段；长期计划的倒计时只响一次。编辑时保留原闹钟时间，勾选上方选项可重新计时。" :
+            "需要勾选“设置时间段”；长期计划每天提醒，当天完成后取消当天闹钟。";
+        alarmHint.Text += " 关闭到托盘后仍会提醒；退出程序或电脑关机时无法响铃。";
         RefreshRepeatHint();
     }
 
@@ -331,6 +362,16 @@ internal sealed class PlanEditor : Form
                 IsCompleted = hasRepeat.Checked ? false : original.IsCompleted,
                 UpdatedAt = DateTimeOffset.Now
             };
+            if (hasAlarm.Checked)
+            {
+                var mode = alarmMode.SelectedIndex == 0 ? "after" : alarmMode.SelectedIndex == 1 ? "start" : "end";
+                var minutes = mode == "after" ? (int?)alarmMinutes.Value : null;
+                var keep = !restartAlarm.Checked && original.Alarm?.Mode == mode && original.Alarm.AfterMinutes == minutes;
+                result = result with { Alarm = (original.Alarm ?? new PlanAlarm()) with {
+                    Mode = mode, AfterMinutes = minutes, At = mode == "after" ? keep ? original.Alarm!.At : DateTimeOffset.Now.AddMinutes(minutes!.Value) : null,
+                    FiredAt = keep ? original.Alarm!.FiredAt : null } };
+            }
+            else result = result with { Alarm = null };
             result.Validate(); Result = result;
             DialogResult = DialogResult.OK; Close();
         }

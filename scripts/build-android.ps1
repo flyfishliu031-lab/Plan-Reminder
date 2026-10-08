@@ -46,7 +46,7 @@ try {
     & $Gradle -p $taskBuild --no-daemon --max-workers=2 @tasks
     if ($LASTEXITCODE -ne 0) { throw "安卓检查失败，诊断文件位于 $taskBuild。" }
     if ($Release) {
-        $out = Join-Path $repo 'artifacts/PlanReminder-1.4.0-Android.apk'
+        $out = Join-Path $repo 'artifacts/PlanReminder-1.5.0-Android.apk'
         & "$AndroidSdk/build-tools/35.0.0/apksigner.bat" verify --verbose "$taskBuild/app/build/outputs/apk/release/app-release.apk"
         if ($LASTEXITCODE -ne 0) { throw 'APK 签名检查失败。' }
         Copy-Item -LiteralPath "$taskBuild/app/build/outputs/apk/release/app-release.apk" -Destination $out -Force

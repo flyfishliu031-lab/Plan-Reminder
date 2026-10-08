@@ -13,6 +13,7 @@ final class Plan {
   LocalDate day, endDay, repeatUntil;
   LocalTime start, end;
   Integer durationMinutes, repeatCount;
+  PlanAlarm alarm;
   boolean completed;
   final TreeSet<LocalDate> dates = new TreeSet<>();
   Instant createdAt = Instant.now(), updatedAt = createdAt;
@@ -76,6 +77,7 @@ final class Plan {
     }
     if (durationMinutes != null && (durationMinutes < 1 || durationMinutes > 525600))
       fail("预期时长须为 1–525600 分钟。");
+    if (alarm != null) alarm.validate(this);
     if (recurring()) {
       if (day == null || repeatCount != null && repeatUntil != null || completed)
         fail("长期计划需要开始日期和一种目标，按日期记录完成。");
@@ -120,7 +122,9 @@ final class Plan {
             : day.equals(endDay)
                 ? clock(start) + " — " + clock(end)
                 : day + " " + clock(start) + " — " + endDay + " " + clock(end);
-    return text + (durationMinutes == null ? "" : " · 预计 " + durationMinutes + " 分钟");
+    return text
+        + (durationMinutes == null ? "" : " · 预计 " + durationMinutes + " 分钟")
+        + (alarm == null ? "" : "\n" + alarm.description());
   }
 
   String progress() {
@@ -157,6 +161,7 @@ final class Plan {
     o.put("endDay", value(endDay));
     o.put("end", value(end));
     o.put("durationMinutes", value(durationMinutes));
+    o.put("alarm", alarm == null ? JSONObject.NULL : alarm.json());
     o.put("isCompleted", completed);
     o.put("repeatUntil", value(repeatUntil));
     o.put("repeatCount", value(repeatCount));
@@ -195,6 +200,7 @@ final class Plan {
                 "endDay",
                 "end",
                 "durationMinutes",
+                "alarm",
                 "isCompleted",
                 "repeatUntil",
                 "repeatCount",
@@ -214,6 +220,7 @@ final class Plan {
     p.start = o.isNull("start") ? null : LocalTime.parse(o.getString("start"));
     p.end = o.isNull("end") ? null : LocalTime.parse(o.getString("end"));
     p.durationMinutes = number(o, "durationMinutes");
+    p.alarm = o.isNull("alarm") ? null : PlanAlarm.from(o.getJSONObject("alarm"));
     p.repeatCount = number(o, "repeatCount");
     if (o.has("isCompleted") && !(o.get("isCompleted") instanceof Boolean)) fail("完成状态无效。");
     p.completed = o.optBoolean("isCompleted", false);
@@ -239,7 +246,7 @@ final class Plan {
     return (String) value;
   }
 
-  private static Integer number(JSONObject o, String key) throws JSONException {
+  static Integer number(JSONObject o, String key) throws JSONException {
     if (o.isNull(key)) return null;
     Object n = o.get(key);
     if (!(n instanceof Number) || ((Number) n).doubleValue() != ((Number) n).intValue())
