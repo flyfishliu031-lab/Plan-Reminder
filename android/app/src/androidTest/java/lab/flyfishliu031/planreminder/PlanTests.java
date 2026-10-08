@@ -87,6 +87,11 @@ public class PlanTests {
     Plan fired = store.all().stream().filter(plan -> plan.id.equals(p.id)).findFirst().get();
     assertEquals(p.alarm.at, fired.alarm.firedAt);
     assertNull(fired.alarm.next(fired, Instant.now()));
+    store.save(p.toggle(LocalDate.now()));
+    store.save(p);
+    assertEquals(
+        p.alarm.at,
+        store.all().stream().filter(plan -> plan.id.equals(p.id)).findFirst().get().alarm.firedAt);
     c.stopService(new Intent(c, AlarmService.class));
     SystemClock.sleep(300);
     assertFalse(AlarmService.running);

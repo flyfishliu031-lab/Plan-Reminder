@@ -30,7 +30,7 @@ public sealed class PlanStore
         item.Validate();
         var updated = plans.ToList();
         var index = updated.FindIndex(p => p.Id == item.Id);
-        if (index < 0) updated.Add(item); else updated[index] = item;
+        if (index < 0) updated.Add(item); else updated[index] = PreserveFired(item, updated[index]);
         Commit(updated);
     }
 
@@ -54,7 +54,7 @@ public sealed class PlanStore
         {
             if (!updated.TryGetValue(item.Id, out var current) || item.UpdatedAt > current.UpdatedAt)
             {
-                updated[item.Id] = item;
+                updated[item.Id] = current is null ? item : PreserveFired(item, current);
                 count++;
             }
         }
@@ -74,6 +74,15 @@ public sealed class PlanStore
     {
         WriteAtomic(FilePath, updated, true);
         plans = updated; // Only change the visible state after the disk write succeeds.
+    }
+
+    private static PlanItem PreserveFired(PlanItem incoming, PlanItem current)
+    {
+        if (incoming.Alarm is { } alarm && current.Alarm is { FiredAt: { } fired } old &&
+            alarm.Mode == old.Mode && alarm.At == old.At && alarm.AfterMinutes == old.AfterMinutes &&
+            incoming.Day == current.Day && incoming.Start == current.Start && incoming.EndDay == current.EndDay && incoming.End == current.End &&
+            (alarm.FiredAt is null || fired > alarm.FiredAt)) return incoming with { Alarm = alarm with { FiredAt = fired } };
+        return incoming;
     }
 
     private static List<PlanItem> Read(string path)

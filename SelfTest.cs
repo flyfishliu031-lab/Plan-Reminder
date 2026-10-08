@@ -260,6 +260,8 @@ internal static class SelfTest
         Check(reopened.Plans.Single(p => p.Id == reminder.Id).Alarm == reminder.Alarm, "alarm deadline and settings survive restart");
         store.Save(reminder with { Alarm = reminder.Alarm with { FiredAt = reminder.Alarm.At } }); reopened.Load();
         Check(reopened.Plans.Single(p => p.Id == reminder.Id).Alarm!.Next(reminder, alarmNow) is null, "fired state survives process restart");
+        store.Save(reminder.ToggleOn(today)); store.Save(reminder);
+        Check(store.Plans.Single(p => p.Id == reminder.Id).Alarm!.FiredAt == reminder.Alarm.At, "stale cards and completion undo cannot overwrite fired state");
         store.Export(backup); imported.Import(backup);
         Check(imported.Plans.Any(p => p.Id == reminder.Id && p.Alarm is not null), "schema 3 backup retains alarm settings");
         using var alarmEditor = new PlanEditor(reminder, false);

@@ -50,8 +50,9 @@ final class PlanStore {
   synchronized void save(Plan p) throws Exception {
     p.validate();
     List<Plan> updated = all();
+    Plan old = updated.stream().filter(x -> x.id.equals(p.id)).findFirst().orElse(null);
     updated.removeIf(x -> x.id.equals(p.id));
-    updated.add(p);
+    updated.add(preserveFired(p, old));
     write(updated, true);
   }
 
@@ -73,7 +74,7 @@ final class PlanStore {
     for (Plan p : incoming) {
       Plan old = merged.get(p.id);
       if (old == null || p.updatedAt.isAfter(old.updatedAt)) {
-        merged.put(p.id, p);
+        merged.put(p.id, preserveFired(p, old));
         count++;
       }
     }
@@ -109,6 +110,26 @@ final class PlanStore {
       result.add(p);
     }
     return result;
+  }
+
+  private static Plan preserveFired(Plan incoming, Plan old) {
+    if (old != null
+        && incoming.alarm != null
+        && old.alarm != null
+        && old.alarm.firedAt != null
+        && incoming.alarm.mode.equals(old.alarm.mode)
+        && Objects.equals(incoming.alarm.at, old.alarm.at)
+        && Objects.equals(incoming.alarm.afterMinutes, old.alarm.afterMinutes)
+        && Objects.equals(incoming.day, old.day)
+        && Objects.equals(incoming.start, old.start)
+        && Objects.equals(incoming.endDay, old.endDay)
+        && Objects.equals(incoming.end, old.end)
+        && (incoming.alarm.firedAt == null || old.alarm.firedAt.isAfter(incoming.alarm.firedAt))) {
+      Plan result = incoming.copy();
+      result.alarm.firedAt = old.alarm.firedAt;
+      return result;
+    }
+    return incoming;
   }
 
   private static byte[] encode(List<Plan> items) throws Exception {
