@@ -1,3 +1,5 @@
+using System.Drawing.Drawing2D;
+
 namespace PlanReminder;
 
 internal sealed class CalendarView : UserControl
@@ -15,16 +17,18 @@ internal sealed class CalendarView : UserControl
         AccessibleName = "月历";
         Height = 390;
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Margin = Padding.Empty };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var navigation = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty };
+        var navigation = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 0, 8) };
         navigation.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 38));
         navigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         navigation.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 38));
         var previous = Theme.Button("‹");
         var next = Theme.Button("›");
         previous.AccessibleName = "上个月"; next.AccessibleName = "下个月";
-        previous.Dock = next.Dock = DockStyle.Fill;
+        previous.Dock = next.Dock = DockStyle.Top;
+        previous.Margin = next.Margin = Padding.Empty;
+        navigation.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         previous.FlatAppearance.BorderSize = next.FlatAppearance.BorderSize = 0;
         previous.Click += (_, _) => MoveMonth(-1);
         next.Click += (_, _) => MoveMonth(1);
@@ -113,11 +117,13 @@ internal sealed class CalendarView : UserControl
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            var background = IsSelected ? Theme.Accent : IsToday ? Color.FromArgb(238, 235, 253) : Color.White;
-            e.Graphics.Clear(background);
-            var color = IsSelected ? Color.White : IsCurrentMonth ? Theme.Ink : Color.FromArgb(170, 175, 188);
+            var background = IsSelected ? Theme.Accent : IsToday ? Theme.SoftAccent : Color.White;
+            e.Graphics.Clear(Color.White); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var shape = Theme.Round(new Rectangle(0, 0, Width - 1, Height - 1), Theme.Px(this, 9));
+            using var fill = new SolidBrush(background); e.Graphics.FillPath(fill, shape);
+            var color = IsSelected ? Color.White : IsCurrentMonth ? Theme.Ink : Theme.Muted;
             var area = new Rectangle(0, 0, Width, Height - Theme.Px(this, 12));
-            TextRenderer.DrawText(e.Graphics, Text, Theme.Body, area, color,
+            TextRenderer.DrawText(e.Graphics, Text, Font, area, color,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
             var diameter = Theme.Px(this, 5); var gap = Theme.Px(this, 3);
             var start = (Width - Markers.Length * (diameter + gap) + gap) / 2;

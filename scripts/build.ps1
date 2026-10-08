@@ -1,4 +1,4 @@
-param([string]$InnoCompiler, [string]$Version = '1.0.0')
+param([string]$InnoCompiler, [string]$Version = '1.1.0')
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path $PSScriptRoot -Parent)
 $env:DOTNET_CLI_HOME = Join-Path (Get-Location) '.dotnet-home'
@@ -11,11 +11,14 @@ dotnet build -c Release -p:Version=$Version
 if ($LASTEXITCODE -ne 0) { throw '构建失败。' }
 dotnet '.\bin\Release\net10.0-windows\PlanReminder.dll' --self-test
 if ($LASTEXITCODE -ne 0) { throw '功能检查失败。' }
+dotnet '.\bin\Release\net10.0-windows\PlanReminder.dll' --ui-check artifacts\ui-preview
+if ($LASTEXITCODE -ne 0) { throw '界面布局检查失败。' }
 dotnet publish -c Release -r win-x64 --self-contained true -p:Version=$Version -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts\publish
 if ($LASTEXITCODE -ne 0) { throw '打包失败。' }
 Copy-Item -LiteralPath README.md -Destination artifacts\publish\README.md -Force
 New-Item -ItemType Directory -Path artifacts\publish\assets -Force | Out-Null
 Copy-Item -LiteralPath assets\editor.png -Destination artifacts\publish\assets\editor.png -Force
+Copy-Item -LiteralPath assets\main.png -Destination artifacts\publish\assets\main.png -Force
 Compress-Archive -LiteralPath artifacts\publish\PlanReminder.exe,artifacts\publish\README.md,artifacts\publish\assets -DestinationPath "artifacts\PlanReminder-$Version-Portable-x64.zip" -Force
 if (!$InnoCompiler) {
     $compilerCandidates = @('.build-tools\inno\ISCC.exe', 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe', 'C:\Program Files\Inno Setup 7\ISCC.exe')

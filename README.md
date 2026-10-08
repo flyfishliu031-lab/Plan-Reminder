@@ -2,18 +2,22 @@
 
 一款离线使用的 Windows 桌面计划表。用日历安排计划，用颜色区分内容，完成后直接划去。
 
+![计划表主窗口](assets/main.png)
+
 ![添加计划窗口](assets/editor.png)
 
 ## 下载与运行
 
 在 [Releases](https://github.com/flyfishliu031-lab/Plan-Reminder/releases) 下载：
 
-- **安装版**：`PlanReminder-1.0.0-Setup-x64.exe`，安装到当前用户目录，可创建桌面快捷方式。
-- **便携版**：`PlanReminder-1.0.0-Portable-x64.zip`，解压后双击 `PlanReminder.exe`。
+- **安装版**：`PlanReminder-1.1.0-Setup-x64.exe`，安装到当前用户目录，可创建桌面快捷方式。
+- **便携版**：`PlanReminder-1.1.0-Portable-x64.zip`，解压后双击 `PlanReminder.exe`。
 
 支持 Windows 10/11 64 位。成品包含 .NET 运行环境，无需另装 .NET，无需账号或联网。
 
-## 第一版功能
+1.1.0 重新设计了主窗口与编辑窗口：浅色背景、青色主按钮、圆角计划卡片、按需展开的时间设置。表单标签随内容调整高度，小窗口可滚动，底部保存按钮始终可用。升级沿用原有计划数据。
+
+## 功能
 
 - 月历与当天计划列表，支持“回到今天”和“待安排”。
 - 添加、编辑计划标题与备注；日期、时间段、预期时长均可选。
@@ -63,6 +67,15 @@ dotnet ./bin/Release/net10.0-windows/PlanReminder.dll --self-test
 
 检查覆盖可选时间、跨天边界、颜色分配、划去与恢复、删除撤销、数据重启保留、备份合并、损坏恢复和保存失败。检查只操作临时目录。
 
+界面检查会打开样例窗口并生成预览，验证文字布局、窗口缩小、长内容、可选字段展开及保存错误提示：
+
+```powershell
+dotnet ./bin/Release/net10.0-windows/PlanReminder.dll --ui-check ./artifacts/ui-preview
+dotnet ./bin/Release/net10.0-windows/PlanReminder.dll --ui-check ./artifacts/ui-96 --ui-check-96
+```
+
+第二条使用独立进程的 96 DPI 测试模式，不改变 Windows 显示设置。已在 96 DPI 基准窗口及本机 144 DPI（150% 缩放）下验证；多显示器之间移动窗口仍需在对应设备上检验。
+
 用于界面演示的样例数据可在独立目录创建：
 
 ```powershell
@@ -71,4 +84,4 @@ dotnet ./bin/Release/net10.0-windows/PlanReminder.dll --self-test
 
 ## 项目结构
 
-使用 .NET 原生 WinForms、System.Text.Json 和文件系统；没有额外运行时依赖。`PlanItem.cs` 定义计划与时间规则，`PlanStore.cs` 负责保存，`MainForm.cs`、`PlanEditor.cs` 与日历/卡片控件负责界面，`SelfTest.cs` 提供一个可执行功能检查。
+使用 .NET 原生 WinForms、System.Text.Json 和文件系统；没有额外运行时依赖。`PlanItem.cs` 定义计划与时间规则，`PlanStore.cs` 负责保存，`MainForm.cs`、`PlanEditor.cs` 与日历/卡片控件负责界面，`SelfTest.cs` 与 `UiCheck.cs` 提供功能和布局检查。

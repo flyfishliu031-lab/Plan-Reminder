@@ -8,11 +8,24 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        ApplicationConfiguration.Initialize();
+        if (args.Contains("--ui-check") && args.Contains("--ui-check-96"))
+        {
+            // Separate-process baseline test; never changes Windows display settings.
+            Application.SetHighDpiMode(HighDpiMode.DpiUnaware);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+        }
+        else ApplicationConfiguration.Initialize();
         Application.SetDefaultFont(Theme.Body);
         if (args.Contains("--self-test"))
         {
             try { SelfTest.Run(); return 0; }
+            catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+        }
+        var uiIndex = Array.IndexOf(args, "--ui-check");
+        if (uiIndex >= 0 && uiIndex + 1 < args.Length)
+        {
+            try { UiCheck.Run(args[uiIndex + 1]); return 0; }
             catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
         }
 
@@ -55,7 +68,7 @@ internal static class Program
         finally { mutex.ReleaseMutex(); }
     }
 
-    private static void AddDemoPlans(PlanStore store)
+    internal static void AddDemoPlans(PlanStore store)
     {
         var today = DateOnly.FromDateTime(DateTime.Now);
         store.Save(new PlanItem { Title = "梳理今天的工作安排", Day = today, Start = new TimeOnly(9, 0), End = new TimeOnly(9, 30), EndDay = today,
