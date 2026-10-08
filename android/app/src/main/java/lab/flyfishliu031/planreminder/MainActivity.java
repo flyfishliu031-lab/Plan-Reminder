@@ -314,12 +314,12 @@ public final class MainActivity extends Activity {
       Button history = button("记录", false);
       history.setEnabled(!busy);
       history.setOnClickListener(v -> history(p));
-      actions.addView(history);
+      actions.addView(history, new LinearLayout.LayoutParams(0, -2, 1));
     }
     Button edit = button("编辑", false);
     edit.setEnabled(!busy);
     edit.setOnClickListener(v -> new EditorForm(this, p, null));
-    actions.addView(edit);
+    actions.addView(edit, new LinearLayout.LayoutParams(0, -2, 1));
     Button delete = button("删除", false);
     delete.setTextColor(DANGER);
     delete.setEnabled(!busy);
@@ -344,7 +344,7 @@ public final class MainActivity extends Activity {
                                   10050);
                             }))
                 .show());
-    actions.addView(delete);
+    actions.addView(delete, new LinearLayout.LayoutParams(0, -2, 1));
     add(card, actions, 8, 0);
     return card;
   }
@@ -510,6 +510,7 @@ public final class MainActivity extends Activity {
     b.setText(label);
     b.setTextSize(15);
     b.setAllCaps(false);
+    b.setSingleLine(false);
     b.setTextColor(primary ? Color.WHITE : INK);
     b.setMinWidth(dp(48));
     b.setMinimumWidth(dp(48));

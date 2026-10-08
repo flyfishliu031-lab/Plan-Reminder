@@ -4,9 +4,12 @@ import static org.junit.Assert.*;
 
 import android.app.Instrumentation;
 import android.content.*;
+import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.os.*;
 import android.view.*;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -222,6 +225,9 @@ public class PlanTests {
           });
       Thread.sleep(500);
       capture("android-main.png");
+      scenario.onActivity(a -> ((ScrollView) a.body.getParent()).fullScroll(View.FOCUS_DOWN));
+      Thread.sleep(350);
+      capture("android-completed.png");
       scenario.onActivity(
           a -> {
             checkButtons(a.footer);
@@ -244,6 +250,42 @@ public class PlanTests {
           });
       Thread.sleep(350);
       capture("android-calendar.png");
+      InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+      scenario.onActivity(
+          a -> {
+            new EditorForm(a, null, null);
+            EditText title =
+                inputs(a.editor.dialog.getWindow().getDecorView()).stream()
+                    .filter(v -> v.getContentDescription().toString().startsWith("计划内容"))
+                    .findFirst()
+                    .get();
+            title.setText("第 1 行\n第 2 行\n第 3 行\n第 4 行\n第 5 行\n第 6 行\n第 7 行\n第 8 行");
+            title.setSelection(title.length());
+            title.requestFocus();
+            ((InputMethodManager) a.getSystemService(Context.INPUT_METHOD_SERVICE))
+                .showSoftInput(title, InputMethodManager.SHOW_IMPLICIT);
+          });
+      Thread.sleep(1500);
+      scenario.onActivity(this::checkSaveVisible);
+      capture("android-keyboard.png");
+      scenario.onActivity(
+          a -> {
+            ((InputMethodManager) a.getSystemService(Context.INPUT_METHOD_SERVICE))
+                .hideSoftInputFromWindow(
+                    a.editor.dialog.getWindow().getDecorView().getWindowToken(), 0);
+            a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+          });
+      Thread.sleep(1500);
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            assertNotNull(a.editor);
+            assertTrue(
+                inputs(a.editor.dialog.getWindow().getDecorView()).stream()
+                    .anyMatch(v -> v.getText().toString().contains("第 8 行")));
+            checkSaveVisible(a);
+          });
+      capture("android-landscape.png");
     }
   }
 
@@ -286,5 +328,26 @@ public class PlanTests {
       assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out));
     }
     bitmap.recycle();
+  }
+
+  private Button findButton(View v, String text) {
+    if (v instanceof Button && ((Button) v).getText().toString().equals(text)) return (Button) v;
+    if (v instanceof ViewGroup)
+      for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) {
+        Button b = findButton(((ViewGroup) v).getChildAt(i), text);
+        if (b != null) return b;
+      }
+    return null;
+  }
+
+  private void checkSaveVisible(MainActivity a) {
+    View decor = a.editor.dialog.getWindow().getDecorView();
+    Button save = findButton(decor, "保存计划");
+    assertNotNull(save);
+    Rect visible = new Rect(), bounds = new Rect();
+    decor.getWindowVisibleDisplayFrame(visible);
+    assertTrue(save.getGlobalVisibleRect(bounds));
+    assertTrue("Save button clipped", bounds.height() == save.getHeight());
+    assertTrue("Keyboard covers save", bounds.bottom <= visible.bottom);
   }
 }

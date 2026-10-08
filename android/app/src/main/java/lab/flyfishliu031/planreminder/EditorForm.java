@@ -5,6 +5,7 @@ import android.graphics.Color;
 import android.os.*;
 import android.text.*;
 import android.view.*;
+import android.view.inputmethod.EditorInfo;
 import android.widget.*;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
@@ -305,6 +306,7 @@ final class EditorForm {
     e.setMinHeight(a.dp(48));
     e.setBackground(a.surface(Color.WHITE, MainActivity.LINE));
     e.setFilters(new InputFilter[] {new InputFilter.LengthFilter(max)});
+    e.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN);
     if (numeric) e.setInputType(InputType.TYPE_CLASS_NUMBER);
     return e;
   }
