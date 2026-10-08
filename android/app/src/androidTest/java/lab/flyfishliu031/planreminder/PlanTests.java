@@ -262,11 +262,29 @@ public class PlanTests {
             title.setText("第 1 行\n第 2 行\n第 3 行\n第 4 行\n第 5 行\n第 6 行\n第 7 行\n第 8 行");
             title.setSelection(title.length());
             title.requestFocus();
-            ((InputMethodManager) a.getSystemService(Context.INPUT_METHOD_SERVICE))
-                .showSoftInput(title, InputMethodManager.SHOW_IMPLICIT);
+            title.postDelayed(
+                () ->
+                    ((InputMethodManager) a.getSystemService(Context.INPUT_METHOD_SERVICE))
+                        .showSoftInput(title, InputMethodManager.SHOW_IMPLICIT),
+                350);
           });
       Thread.sleep(1500);
-      scenario.onActivity(this::checkSaveVisible);
+      scenario.onActivity(
+          a -> {
+            View decor = a.editor.dialog.getWindow().getDecorView();
+            if (Build.VERSION.SDK_INT >= 30)
+              assertTrue(
+                  "Keyboard did not open",
+                  decor.getRootWindowInsets().isVisible(WindowInsets.Type.ime()));
+            else {
+              Rect area = new Rect();
+              decor.getWindowVisibleDisplayFrame(area);
+              assertTrue(
+                  "Keyboard did not open",
+                  area.bottom < a.getResources().getDisplayMetrics().heightPixels - a.dp(150));
+            }
+            checkSaveVisible(a);
+          });
       capture("android-keyboard.png");
       scenario.onActivity(
           a -> {
@@ -320,6 +338,7 @@ public class PlanTests {
 
   private void capture(String name) throws Exception {
     Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+    inst.waitForIdleSync();
     Bitmap bitmap = inst.getUiAutomation().takeScreenshot();
     assertNotNull(bitmap);
     File dir = new File(inst.getTargetContext().getExternalFilesDir(null), "screenshots");

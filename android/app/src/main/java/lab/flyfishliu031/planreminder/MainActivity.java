@@ -581,10 +581,10 @@ public final class MainActivity extends Activity {
             v.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
           } else
             v.setPadding(
-                insets.getSystemWindowInsetLeft(),
-                insets.getSystemWindowInsetTop(),
-                insets.getSystemWindowInsetRight(),
-                insets.getSystemWindowInsetBottom());
+                insets.getStableInsetLeft(),
+                insets.getStableInsetTop(),
+                insets.getStableInsetRight(),
+                insets.getStableInsetBottom());
           return insets;
         });
     view.requestApplyInsets();
