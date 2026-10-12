@@ -298,11 +298,11 @@ public final class MainActivity extends Activity {
         });
     if (mode == 3) {
       LinearLayout actions = row();
-      Button top = button("日期与视图", false);
-      top.setOnClickListener(v -> mainScroll.smoothScrollTo(0, 0));
+      Button navigation = button("日期与视图", false);
+      navigation.setOnClickListener(v -> mainScroll.smoothScrollTo(0, 0));
       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
       lp.setMarginEnd(dp(8));
-      actions.addView(top, lp);
+      actions.addView(navigation, lp);
       actions.addView(add, new LinearLayout.LayoutParams(0, -2, 2));
       footer.addView(actions);
       if (!selected.equals(timelineDayShown)) {

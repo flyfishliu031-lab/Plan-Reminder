@@ -111,6 +111,16 @@ public class PlanTests {
             }
           });
       SystemClock.sleep(350);
+      scenario.onActivity(
+          a -> {
+            Rect visible = new Rect();
+            assertTrue(
+                "Opening timetable must show the time axis",
+                a.timeline.getGlobalVisibleRect(visible));
+            assertTrue(
+                "Opening timetable must leave usable timeline space", visible.height() >= a.dp(80));
+            assertNotNull(findButton(a.footer, "日期与视图"));
+          });
       capture("android-timetable.png");
       scenario.onActivity(
           a -> {

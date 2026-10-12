@@ -97,7 +97,14 @@ internal sealed class DailyTimelineView : UserControl
                 b.FlatAppearance.BorderColor = color; b.FlatAppearance.BorderSize = 1;
                 b.Click += (_, _) => owner.OpenRequested?.Invoke(s.Plan, s.Occurrence);
                 b.Paint += (_, e) => { if (s.Plan.IsCompleteOn(s.Occurrence)) {
-                    using var pen = new Pen(color, Theme.Px(this, 3)); e.Graphics.DrawLine(pen, 5, Math.Min(b.Height - 2, Theme.Px(this, 16)), b.Width - 5, Math.Min(b.Height - 2, Theme.Px(this, 16)));
+                    using var pen = new Pen(color, Theme.Px(this, 3));
+                    var measured = TextRenderer.MeasureText(b.Text, b.Font, new Size(Math.Max(1, b.Width - b.Padding.Horizontal), int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+                    var lines = Math.Max(1, (int)Math.Ceiling(measured.Height / (double)b.Font.Height));
+                    for (var i = 0; i < lines; i++) {
+                        var y = b.Padding.Top + b.Font.Height / 2 + i * b.Font.Height;
+                        if (y >= b.Height) break;
+                        e.Graphics.DrawLine(pen, b.Padding.Left, y, b.Width - b.Padding.Right - 4, y);
+                    }
                 }};
                 tips.SetToolTip(b, s.Caption); Controls.Add(b);
             }
