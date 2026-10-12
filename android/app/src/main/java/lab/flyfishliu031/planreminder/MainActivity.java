@@ -35,6 +35,7 @@ public final class MainActivity extends Activity {
   int mode; // 0: selected date, 1: unscheduled, 2: long-term overview, 3: timetable.
   DailyTimelineView timeline;
   ScrollView mainScroll;
+  private LocalDate timelineDayShown;
   boolean ready, busy;
   LinearLayout root, body, list, footer;
   TextView clock, heading;
@@ -295,7 +296,37 @@ public final class MainActivity extends Activity {
           if (mode == 3) addTimelinePlan(540, 600);
           else new EditorForm(this, null, null);
         });
-    footer.addView(add, new LinearLayout.LayoutParams(-1, -2));
+    if (mode == 3) {
+      LinearLayout actions = row();
+      Button top = button("日期与视图", false);
+      top.setOnClickListener(v -> mainScroll.smoothScrollTo(0, 0));
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
+      lp.setMarginEnd(dp(8));
+      actions.addView(top, lp);
+      actions.addView(add, new LinearLayout.LayoutParams(0, -2, 2));
+      footer.addView(actions);
+      if (!selected.equals(timelineDayShown)) {
+        timelineDayShown = selected;
+        int minute =
+            selected.equals(LocalDate.now())
+                ? Math.max(0, LocalTime.now().getHour() * 60 - 60)
+                : 480;
+        DailyTimelineView view = timeline;
+        mainScroll.post(
+            () -> {
+              if (timeline == view && editor == null)
+                mainScroll.scrollTo(
+                    0,
+                    body.getTop()
+                        + list.getTop()
+                        + view.getTop()
+                        + (int) (minute * view.hour / 60));
+            });
+      }
+    } else {
+      timelineDayShown = null;
+      footer.addView(add, new LinearLayout.LayoutParams(-1, -2));
+    }
     root.setEnabled(!busy);
   }
 
