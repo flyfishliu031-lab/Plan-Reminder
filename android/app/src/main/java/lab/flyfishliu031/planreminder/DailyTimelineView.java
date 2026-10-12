@@ -25,7 +25,8 @@ final class DailyTimelineView extends FrameLayout {
     segments = DaySegment.layout(plans, day);
     hour = a.dp(88);
     top = a.dp(20);
-    left = a.dp(56);
+    paint.setTextSize(13 * getResources().getDisplayMetrics().scaledDensity);
+    left = Math.max(a.dp(56), paint.measureText("24:00") + a.dp(8));
     setBackgroundColor(Color.WHITE);
     setWillNotDraw(false);
     setContentDescription("全天时间表，点击空白处选择开始和结束时间；上方计划选择框和添加计划按钮也可操作");
@@ -70,7 +71,13 @@ final class DailyTimelineView extends FrameLayout {
       lp.height = height;
       lp.leftMargin = (int) left + s.column * columnWidth + a.dp(2);
       lp.topMargin = (int) (top + s.start * hour / 60);
-      b.setText(height < a.dp(36) ? "" : s.plan.title.replace('\n', ' '));
+      b.setText(
+          height
+                  < Math.max(
+                      a.dp(36),
+                      b.getPaint().getFontSpacing() + b.getPaddingTop() + b.getPaddingBottom())
+              ? ""
+              : s.plan.title.replace('\n', ' '));
     }
     super.onMeasure(
         w, MeasureSpec.makeMeasureSpec((int) (top * 2 + 24 * hour), MeasureSpec.EXACTLY));

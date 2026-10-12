@@ -55,6 +55,14 @@ jobs:
             grep -q 'OK (1 test)' artifacts/android-screenshots/alarm-check.txt
             adb shell am instrument -w -e class lab.flyfishliu031.planreminder.PlanTests#timetableOvernightAndSelection lab.flyfishliu031.planreminder.test/androidx.test.runner.AndroidJUnitRunner > artifacts/android-screenshots/timetable-check.txt
             grep -q 'OK (1 test)' artifacts/android-screenshots/timetable-check.txt
+            adb shell wm size 984x1920
+            adb shell wm density 420
+            adb shell settings put system font_scale 2.0
+            adb shell am instrument -w -e class lab.flyfishliu031.planreminder.PlanTests#timetableOvernightAndSelection lab.flyfishliu031.planreminder.test/androidx.test.runner.AndroidJUnitRunner > artifacts/android-screenshots/timetable-large-text-check.txt
+            grep -q 'OK (1 test)' artifacts/android-screenshots/timetable-large-text-check.txt
+            adb shell settings put system font_scale 1.0
+            adb shell wm density reset
+            adb shell wm size reset
             adb pull /sdcard/Android/data/lab.flyfishliu031.planreminder/files/screenshots artifacts/android-screenshots
       - uses: actions/upload-artifact@v4
         if: always()

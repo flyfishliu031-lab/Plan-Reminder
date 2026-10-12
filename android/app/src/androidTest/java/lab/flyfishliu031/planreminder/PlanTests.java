@@ -776,6 +776,8 @@ public class PlanTests {
     assertNotNull(bitmap);
     File dir = new File(inst.getTargetContext().getExternalFilesDir(null), "screenshots");
     dir.mkdirs();
+    if (inst.getTargetContext().getResources().getConfiguration().fontScale > 1.5f)
+      name = "large-text-" + name;
     try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
       assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out));
     }
