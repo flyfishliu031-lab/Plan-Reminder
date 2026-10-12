@@ -26,7 +26,7 @@ final class DailyTimelineView extends FrameLayout {
     hour = a.dp(88);
     top = a.dp(20);
     paint.setTextSize(13 * getResources().getDisplayMetrics().scaledDensity);
-    left = Math.max(a.dp(56), paint.measureText("24:00") + a.dp(8));
+    left = Math.max(a.dp(56), paint.measureText("24:00") + a.dp(16));
     setBackgroundColor(Color.WHITE);
     setWillNotDraw(false);
     setContentDescription("全天时间表，点击空白处选择开始和结束时间；上方计划选择框和添加计划按钮也可操作");
