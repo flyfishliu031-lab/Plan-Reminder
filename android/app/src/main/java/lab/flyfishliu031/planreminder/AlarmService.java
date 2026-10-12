@@ -60,7 +60,9 @@ public final class AlarmService extends Service {
         if (current == null
             || current.alarm == null
             || current.checked(dates.get(id))
-            || current.finished(LocalDate.now())) ringing.remove(id);
+            || current.goalReached()
+            || current.alarm.mode.equals("after") && current.finished(LocalDate.now()))
+          ringing.remove(id);
       }
       if (ringing.isEmpty()) {
         stopSelf();
@@ -74,9 +76,7 @@ public final class AlarmService extends Service {
             p.id,
             p.alarm.mode.equals("after")
                 ? LocalDate.now()
-                : Instant.parse(intent.getStringExtra("occurrence"))
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDate());
+                : p.alarm.occurrence(p, Instant.parse(intent.getStringExtra("occurrence"))));
         handler.removeCallbacksAndMessages(null);
         handler.postDelayed(this::stopSelf, 60000);
       } catch (Exception e) {

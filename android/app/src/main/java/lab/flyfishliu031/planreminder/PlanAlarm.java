@@ -27,7 +27,9 @@ final class PlanAlarm {
 
   Instant next(Plan p, Instant now) {
     ZoneId zone = ZoneId.systemDefault();
-    if (p.completed || p.finished(now.atZone(zone).toLocalDate())) return null;
+    if (p.completed
+        || p.goalReached()
+        || mode.equals("after") && p.finished(now.atZone(zone).toLocalDate())) return null;
     Instant earliest = now.minusSeconds(300);
     if (mode.equals("after"))
       return eligible(at, earliest) && (!p.recurring() || !p.checked(at.atZone(zone).toLocalDate()))
@@ -40,15 +42,26 @@ final class PlanAlarm {
               .toInstant();
       return eligible(time, earliest) ? time : null;
     }
-    LocalDate day = earliest.atZone(zone).toLocalDate();
+    LocalDate day =
+        earliest.atZone(zone).toLocalDate().minusDays(mode.equals("end") ? p.endOffset() : 0);
     if (day.isBefore(p.day)) day = p.day;
     for (int i = 0; i <= p.dates.size() + 2 && day.getYear() <= 9998; i++, day = day.plusDays(1)) {
-      if (!p.appears(day)) return null;
+      if (!p.occurs(day)) return null;
       if (p.checked(day)) continue;
-      Instant time = day.atTime(mode.equals("start") ? p.start : p.end).atZone(zone).toInstant();
+      Instant time =
+          day.plusDays(mode.equals("end") ? p.endOffset() : 0)
+              .atTime(mode.equals("start") ? p.start : p.end)
+              .atZone(zone)
+              .toInstant();
       if (eligible(time, earliest)) return time;
     }
     return null;
+  }
+
+  LocalDate occurrence(Plan p, Instant due) {
+    return due.atZone(ZoneId.systemDefault())
+        .toLocalDate()
+        .minusDays(p.recurring() && mode.equals("end") ? p.endOffset() : 0);
   }
 
   private boolean eligible(Instant time, Instant earliest) {

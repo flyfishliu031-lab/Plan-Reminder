@@ -57,7 +57,7 @@ internal sealed class PlanEditor : Form
         var header = Stack();
         header.Padding = new Padding(28, 20, 28, 12);
         Add(header, Theme.Label(Text, Theme.EditorHeading), 4);
-        Add(header, Theme.Label("把想做的事记下来，时间可以稍后安排。", Theme.Small, Theme.Muted), 0);
+        Add(header, Theme.Label(!isNew && item.IsRecurring ? "正在编辑整个长期计划；已有完成记录会保留。" : "把想做的事记下来，时间可以稍后安排。", Theme.Small, Theme.Muted), 0);
 
         var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(28, 0, 28, 0), Margin = Padding.Empty };
         var body = Stack();
@@ -194,7 +194,13 @@ internal sealed class PlanEditor : Form
         repeatMode.SelectedIndexChanged += (_, _) =>
         { repeatValue.Maximum = repeatMode.SelectedIndex == 0 ? 3650 : 10000; RefreshRepeatHint(); };
         repeatValue.ValueChanged += (_, _) => RefreshRepeatHint();
-        date.ValueChanged += (_, _) => { if (hasRepeat.Checked || endDate.Value.Date < date.Value.Date) endDate.Value = date.Value.Date; RefreshRepeatHint(); };
+        var previousDate = date.Value.Date;
+        date.ValueChanged += (_, _) => {
+            var offset = (endDate.Value.Date - previousDate).Days;
+            if (hasRepeat.Checked) endDate.Value = date.Value.Date.AddDays(Math.Clamp(offset, 0, 1));
+            else if (endDate.Value.Date < date.Value.Date) endDate.Value = date.Value.Date;
+            previousDate = date.Value.Date; RefreshRepeatHint();
+        };
         unit.SelectedIndexChanged += (_, _) =>
         {
             var minutes = duration.Value * (previousUnit == 1 ? 60 : 1);
@@ -306,7 +312,7 @@ internal sealed class PlanEditor : Form
         dateField.Visible = hasDate.Checked; hasSchedule.Enabled = hasDate.Checked;
         scheduleFields.Visible = hasDate.Checked && hasSchedule.Checked;
         start.Enabled = end.Enabled = endDate.Enabled = hasDate.Checked && hasSchedule.Checked;
-        endDateField.Visible = !hasRepeat.Checked;
+        endDateField.Visible = true;
         durationFields.Visible = hasDuration.Checked;
         repeatFields.Visible = hasRepeat.Checked;
         alarmFields.Visible = hasAlarm.Checked;
@@ -329,7 +335,7 @@ internal sealed class PlanEditor : Form
                 $"从 {begin:yyyy/MM/dd} 开始，每天重复，至 {DateOnly.FromDayNumber(number):yyyy/MM/dd}（含当天）。到期自动结束，每天的完成记录会保留。" : "持续时间超出可用日期范围，请缩短天数。";
         }
         else repeatHint.Text = $"从安排日期开始，每天重复，累计完成 {repeatValue.Value:0} 次后结束。每天最多记录一次；未来日期到当天才可勾选。";
-        repeatHint.Text += " 每天的时间段须在同一天内。";
+        repeatHint.Text += " 时间段可跨到次日，最长 24 小时；完成记录归属开始日期。编辑会修改整个长期计划。";
         if (original.CompletionDates.Count > 0) repeatHint.Text += " 修改目标会保留已有记录；开始和结束日期须包含已完成的日期。";
     }
 
@@ -354,7 +360,7 @@ internal sealed class PlanEditor : Form
                 Day = hasDate.Checked ? DateOnly.FromDateTime(date.Value) : null,
                 Start = scheduled ? TimeOnly.FromDateTime(start.Value) : null,
                 End = scheduled ? TimeOnly.FromDateTime(end.Value) : null,
-                EndDay = scheduled ? DateOnly.FromDateTime(hasRepeat.Checked ? date.Value : endDate.Value) : null,
+                EndDay = scheduled ? DateOnly.FromDateTime(endDate.Value) : null,
                 DurationMinutes = hasDuration.Checked ? (int)Math.Round(duration.Value * (unit.SelectedIndex == 1 ? 60 : 1), MidpointRounding.AwayFromZero) : null,
                 RepeatUntil = hasRepeat.Checked && repeatMode.SelectedIndex == 0 ? DateOnly.FromDateTime(date.Value).AddDays((int)repeatValue.Value - 1) : null,
                 RepeatCount = hasRepeat.Checked && repeatMode.SelectedIndex == 1 ? (int)repeatValue.Value : null,

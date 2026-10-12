@@ -35,8 +35,12 @@ final class EditorForm {
   private String ringtone;
 
   EditorForm(MainActivity activity, Plan plan, Bundle state) {
+    this(activity, plan, state, false);
+  }
+
+  EditorForm(MainActivity activity, Plan plan, Bundle state, boolean isNew) {
     a = activity;
-    original = plan;
+    original = isNew ? null : plan;
     a.editor = this;
     LocalDate today = LocalDate.now();
     day = plan != null && plan.day != null ? plan.day : a.selected;
@@ -58,7 +62,9 @@ final class EditorForm {
     dialog.setContentView(root);
     LinearLayout header = a.column();
     header.setPadding(a.dp(20), a.dp(16), a.dp(20), a.dp(12));
-    header.addView(a.text(plan == null ? "添加计划" : "编辑计划", 26, MainActivity.INK));
+    header.addView(a.text(original == null ? "添加计划" : "编辑计划", 26, MainActivity.INK));
+    if (original != null && original.recurring())
+      a.add(header, a.text("正在编辑整个长期计划；已有完成记录会保留。", 14, MainActivity.MUTED), 8, 0);
     root.addView(header);
     ScrollView scroll = new ScrollView(a);
     scroll.setFillViewport(true);
@@ -108,7 +114,8 @@ final class EditorForm {
     field(repeatFields, "目标数值", goal);
     a.add(
         repeatFields,
-        a.text("持续天数含开始当天，结束日期过后自动结束。完成次数每天最多计一次，达到目标后结束。", 14, MainActivity.MUTED),
+        a.text(
+            "每天重复，按持续天数或完成次数结束。时间段可跨到次日，最长 24 小时；完成记录归属开始日期。修改会影响整个长期计划。", 14, MainActivity.MUTED),
         8,
         4);
     a.add(form, repeatFields, 0, 8);
@@ -121,9 +128,11 @@ final class EditorForm {
             a.pickDate(
                 day,
                 date -> {
-                  boolean aligned = day.equals(endDay);
+                  long offset = ChronoUnit.DAYS.between(day, endDay);
                   day = date;
-                  if (aligned || repeated.isChecked()) endDay = date;
+                  if (repeated.isChecked())
+                    endDay = date.plusDays(Math.max(0, Math.min(1, offset)));
+                  else if (offset == 0 || endDay.isBefore(date)) endDay = date;
                   update();
                 }));
     field(dateFields, "日期 / 长期计划开始日期", dayButton);
@@ -326,7 +335,6 @@ final class EditorForm {
         (b, c) -> {
           if (c) {
             dated.setChecked(true);
-            endDay = day;
           } else if (original != null && !original.dates.isEmpty()) {
             repeated.setChecked(true);
             error.setText("已有完成记录的长期计划不能直接改为单次计划。");
@@ -428,7 +436,7 @@ final class EditorForm {
     endDayButton.setText(endDay.toString());
     startButton.setText(Plan.clock(start));
     endButton.setText(Plan.clock(end));
-    endDayButton.setEnabled(!repeated.isChecked());
+    endDayButton.setEnabled(true);
     colorButton.setText("当前 " + color + " · 自定义颜色");
     colorButton.setTextColor(MainActivity.INK);
   }
@@ -443,7 +451,7 @@ final class EditorForm {
       p.day = dated.isChecked() ? day : null;
       p.start = scheduled.isChecked() ? start : null;
       p.end = scheduled.isChecked() ? end : null;
-      p.endDay = scheduled.isChecked() ? (repeated.isChecked() ? day : endDay) : null;
+      p.endDay = scheduled.isChecked() ? endDay : null;
       p.durationMinutes = expected.isChecked() ? positive(duration, "预期时长") : null;
       p.repeatCount = null;
       p.repeatUntil = null;

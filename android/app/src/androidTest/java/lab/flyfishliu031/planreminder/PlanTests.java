@@ -21,6 +21,221 @@ import org.junit.*;
 
 public class PlanTests {
   @Test
+  public void timetableOvernightAndSelection() throws Exception {
+    Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+    Context context = inst.getTargetContext();
+    if (Build.VERSION.SDK_INT >= 33)
+      inst.getUiAutomation()
+          .grantRuntimePermission(
+              context.getPackageName(), android.Manifest.permission.POST_NOTIFICATIONS);
+    if (Build.VERSION.SDK_INT >= 31) {
+      try (ParcelFileDescriptor fd =
+              inst.getUiAutomation()
+                  .executeShellCommand(
+                      "appops set " + context.getPackageName() + " SCHEDULE_EXACT_ALARM allow");
+          InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(fd)) {
+        while (in.read() != -1) {}
+      }
+    }
+    LocalDate today = LocalDate.now();
+    Plan p = new Plan();
+    p.title = "每天睡前阅读";
+    p.day = today.minusDays(1);
+    p.start = LocalTime.of(23, 0);
+    p.endDay = today;
+    p.end = LocalTime.of(1, 0);
+    p.repeatUntil = today;
+    p.alarm = new PlanAlarm();
+    p.alarm.mode = "end";
+    p.validate();
+    assertEquals(2, p.segments(today).size());
+    assertEquals(today.minusDays(1), p.segments(today).get(0).occurrence);
+    assertTrue(p.appears(today.plusDays(1)));
+    assertFalse(p.appears(today.plusDays(2)));
+    Plan midnight = p.copy();
+    midnight.end = LocalTime.MIDNIGHT;
+    assertFalse(midnight.appears(today.plusDays(1)));
+    Instant midnightDue = today.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant();
+    assertTrue(midnight.finished(today.plusDays(1)));
+    assertEquals(midnightDue, midnight.alarm.next(midnight, midnightDue));
+    Plan tooLong = p.copy();
+    tooLong.end = LocalTime.of(23, 1);
+    rejects(tooLong::validate);
+    rejects(() -> p.toggle(today.plusDays(1)));
+    Instant now = today.plusDays(1).atTime(0, 30).atZone(ZoneId.systemDefault()).toInstant();
+    Instant due = today.plusDays(1).atTime(1, 0).atZone(ZoneId.systemDefault()).toInstant();
+    assertEquals(due, p.alarm.next(p, now));
+    assertEquals(today, p.alarm.occurrence(p, due));
+    assertNull(p.alarm.next(p.toggle(today), now));
+    Plan conflict = new Plan();
+    conflict.title = "凌晨安排";
+    conflict.day = today.plusDays(1);
+    conflict.endDay = conflict.day;
+    conflict.start = LocalTime.of(0, 30);
+    conflict.end = LocalTime.of(1, 30);
+    assertTrue(p.overlaps(conflict));
+    assertTrue(conflict.overlaps(p));
+    assertFalse(p.toggle(today).overlaps(conflict));
+    java.util.List<DaySegment> blocks =
+        DaySegment.layout(Arrays.asList(p, conflict), today.plusDays(1));
+    assertEquals(2, blocks.size());
+    assertEquals(2, blocks.get(0).columns);
+    assertNotEquals(blocks.get(0).column, blocks.get(1).column);
+    try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            try {
+              for (Plan old : a.store.all()) a.store.delete(old.id);
+              a.store.save(p);
+              Plan daytime = new Plan();
+              daytime.title = "专注学习";
+              daytime.day = today;
+              daytime.start = LocalTime.of(9, 0);
+              daytime.end = LocalTime.of(10, 30);
+              daytime.endDay = today;
+              daytime.color = Plan.COLORS[2];
+              a.store.save(daytime);
+              Plan overlapping = daytime.copy();
+              overlapping.id = UUID.randomUUID().toString();
+              overlapping.title = "整理笔记";
+              overlapping.start = LocalTime.of(10, 0);
+              overlapping.end = LocalTime.of(11, 0);
+              overlapping.color = Plan.COLORS[1];
+              a.store.save(overlapping);
+              a.selected = today;
+              a.mode = 3;
+              a.render();
+            } catch (Exception e) {
+              throw new AssertionError(e);
+            }
+          });
+      SystemClock.sleep(350);
+      capture("android-timetable.png");
+      scenario.onActivity(
+          a -> {
+            assertNotNull(a.timeline);
+            assertEquals(4, a.timeline.segments.size());
+            a.mainScroll.scrollTo(0, a.list.getTop() + a.timeline.getTop() + a.dp(8 * 88));
+          });
+      SystemClock.sleep(350);
+      capture("android-timetable-day.png");
+      tapTimeline(scenario, 12 * 60 + 7);
+      tapTimeline(scenario, 13 * 60 + 11);
+      scenario.onActivity(
+          a -> {
+            assertNotNull(a.editor);
+            assertEquals("12:07", a.editor.snapshot().getString("start"));
+            assertEquals("13:11", a.editor.snapshot().getString("end"));
+            a.editor.dialog.dismiss();
+          });
+      scenario.onActivity(
+          a -> {
+            a.timeline.chooseMinute(23 * 60 + 17);
+            a.timeline.chooseMinute(1440);
+            assertEquals("23:17", a.editor.snapshot().getString("start"));
+            assertEquals("00:00", a.editor.snapshot().getString("end"));
+            assertEquals(today.plusDays(1).toString(), a.editor.snapshot().getString("endDay"));
+            assertTrue(a.editor.snapshot().getBoolean("scheduled"));
+            assertFalse(a.editor.snapshot().containsKey("original"));
+          });
+      scenario.recreate();
+      waitReady(scenario);
+      SystemClock.sleep(300);
+      scenario.onActivity(
+          a -> {
+            assertEquals(3, a.mode);
+            assertEquals("23:17", a.editor.snapshot().getString("start"));
+            checkSaveVisible(a);
+            try {
+              a.store.delete(p.id);
+            } catch (Exception e) {
+              throw new AssertionError(e);
+            }
+            inputs(a.editor.dialog.getWindow().getDecorView()).stream()
+                .filter(v -> "计划内容（必填）".contentEquals(v.getContentDescription()))
+                .findFirst()
+                .get()
+                .setText("时间表新增跨夜长期计划");
+            findCheckBox(a.editor.dialog.getWindow().getDecorView(), "设为长期计划（每天重复）")
+                .setChecked(true);
+            inputs(a.editor.dialog.getWindow().getDecorView()).stream()
+                .filter(v -> "长期计划目标".contentEquals(v.getContentDescription()))
+                .findFirst()
+                .get()
+                .setText("2");
+            findButton(a.editor.dialog.getWindow().getDecorView(), "完成次数").performClick();
+            findCheckBox(a.editor.dialog.getWindow().getDecorView(), "添加闹钟 · 可选").setChecked(true);
+            findButton(a.editor.dialog.getWindow().getDecorView(), "计划结束时响起").performClick();
+            a.editor.save();
+          });
+      waitReady(scenario);
+      SystemClock.sleep(400);
+      scenario.onActivity(
+          a -> {
+            Plan saved =
+                a.store.all().stream()
+                    .filter(plan -> plan.title.equals("时间表新增跨夜长期计划"))
+                    .findFirst()
+                    .get();
+            assertEquals(Integer.valueOf(2), saved.repeatCount);
+            assertEquals(1, saved.endOffset());
+            assertEquals("end", saved.alarm.mode);
+            assertEquals(LocalTime.of(23, 17), saved.start);
+            assertEquals(LocalTime.MIDNIGHT, saved.end);
+            assertEquals(1, saved.toggle(today).dates.size());
+          });
+      scenario.onActivity(
+          a -> a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
+      SystemClock.sleep(1400);
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            assertEquals(3, a.mode);
+            assertNotNull(a.timeline);
+            checkButtons(a.footer);
+          });
+      capture("android-timetable-landscape.png");
+    }
+  }
+
+  private void tapTimeline(ActivityScenario<MainActivity> scenario, int minute) {
+    float[] point = new float[2];
+    scenario.onActivity(
+        a -> {
+          int[] location = new int[2];
+          a.timeline.getLocationOnScreen(location);
+          point[0] = location[0] + a.timeline.left + a.dp(40);
+          point[1] = location[1] + a.timeline.top + minute * a.timeline.hour / 60;
+          assertTrue(
+              "Tap must be on visible screen",
+              point[1] > 0
+                  && point[1] < a.getResources().getDisplayMetrics().heightPixels - a.dp(72));
+        });
+    Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+    long time = SystemClock.uptimeMillis();
+    MotionEvent down =
+        MotionEvent.obtain(time, time, MotionEvent.ACTION_DOWN, point[0], point[1], 0);
+    MotionEvent up =
+        MotionEvent.obtain(time, time + 60, MotionEvent.ACTION_UP, point[0], point[1], 0);
+    inst.sendPointerSync(down);
+    inst.sendPointerSync(up);
+    down.recycle();
+    up.recycle();
+    inst.waitForIdleSync();
+  }
+
+  private CheckBox findCheckBox(View v, String text) {
+    if (v instanceof CheckBox && text.contentEquals(((CheckBox) v).getText())) return (CheckBox) v;
+    if (v instanceof ViewGroup)
+      for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) {
+        CheckBox b = findCheckBox(((ViewGroup) v).getChildAt(i), text);
+        if (b != null) return b;
+      }
+    return null;
+  }
+
+  @Test
   public void alarmsPersistCancelAndRingInBackground() throws Exception {
     Instrumentation inst = InstrumentationRegistry.getInstrumentation();
     Context c = inst.getTargetContext();

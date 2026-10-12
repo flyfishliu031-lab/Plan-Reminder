@@ -125,8 +125,38 @@ internal static class SelfTest
         Reject(() => (daily with { CompletedDates = [begin, begin] }).Validate(), "duplicate completion records rejected");
         Reject(() => (daily with { CompletedDates = [begin.AddDays(-1)] }).Validate(), "completion before start rejected");
         Reject(() => (daily with { RepeatUntil = begin.AddDays(3650) }).Validate(), "oversized duration goal rejected");
-        Reject(() => (daily with { Start = new TimeOnly(23, 0), End = new TimeOnly(1, 0), EndDay = begin.AddDays(1) }).Validate(),
-            "cross-day daily template rejected without changing ordinary cross-day plans");
+        var overnight = daily with { Start = new TimeOnly(23, 0), End = new TimeOnly(1, 0), EndDay = begin.AddDays(1) };
+        overnight.Validate();
+        Check(overnight.AppearsOn(today.AddDays(1)) && !overnight.AppearsOn(today.AddDays(2)), "overnight recurrence includes final continuation only");
+        Check(overnight.Segments(today).Count() == 2 && overnight.Segments(today).First().Occurrence == today.AddDays(-1), "overnight segments retain separate occurrence dates");
+        Check(overnight.Segments(today.AddDays(1)).Single().Start == 0 && overnight.Segments(today.AddDays(1)).Single().End == 60, "final continuation clips to visible day");
+        Check(!(overnight with { End = TimeOnly.MinValue }).AppearsOn(today.AddDays(1)), "recurring midnight endpoint is exclusive");
+        Reject(() => (overnight with { End = new TimeOnly(23, 1) }).Validate(), "daily occurrence over 24 hours rejected");
+        Reject(() => overnight.ToggleOn(today.AddDays(1)), "continuation date cannot create an extra completion");
+        var tailAlarm = overnight with { Alarm = new PlanAlarm { Mode = "end" } };
+        var tailMorning = new DateTimeOffset(today.AddDays(1).ToDateTime(new TimeOnly(0, 30)), TimeZoneInfo.Local.GetUtcOffset(today.AddDays(1).ToDateTime(new TimeOnly(0, 30))));
+        Check(tailAlarm.Alarm!.Next(tailAlarm, tailMorning)?.LocalDateTime == today.AddDays(1).ToDateTime(new TimeOnly(1, 0)), "final overnight end alarm remains active after last start date");
+        Check(tailAlarm.Alarm.Next(tailAlarm.ToggleOn(today), tailMorning) is null, "completion of start date cancels its overnight end alarm");
+        Check(tailAlarm.Alarm.Occurrence(tailAlarm, tailMorning.AddMinutes(30)) == today, "overnight alarm belongs to start date");
+        var midnightAlarm = tailAlarm with { End = TimeOnly.MinValue };
+        var midnightDue = tailMorning.AddMinutes(-30);
+        Check(midnightAlarm.SeriesFinished(today.AddDays(1)) && midnightAlarm.Alarm!.Next(midnightAlarm, midnightDue) == midnightDue, "final midnight alarm rings even when calendar series has ended");
+        var afterMidnight = new PlanItem { Title = "凌晨计划", Day = today.AddDays(1), Start = new TimeOnly(0, 30), EndDay = today.AddDays(1), End = new TimeOnly(1, 30) };
+        Check(overnight.Overlaps(afterMidnight) && afterMidnight.Overlaps(overnight), "overnight conflict on final continuation is symmetric");
+        Check(!overnight.ToggleOn(today).Overlaps(afterMidnight), "completed overnight occurrence no longer conflicts on following day");
+        var overlapBlocks = DaySegment.Layout(new[] { crossDay, afterMidnight with { Day = today, EndDay = today, Start = new TimeOnly(23, 30), End = new TimeOnly(23, 59) } }, today);
+        Check(overlapBlocks.Length == 2 && overlapBlocks.All(s => s.Columns == 2) && overlapBlocks.Select(s => s.Column).Distinct().Count() == 2, "overlapping timeline blocks receive separate columns");
+        var adjacent = DaySegment.Layout(new[] { afterMidnight, afterMidnight with { Id = Guid.NewGuid(), Start = new TimeOnly(1, 30), End = new TimeOnly(2, 0) } }, today.AddDays(1));
+        Check(adjacent.All(s => s.Columns == 1), "touching timeline blocks share a full-width column");
+        form.SelectDate(today); form.ShowTimeline(); form.Show(); Application.DoEvents();
+        Check(form.Timeline.Visible && form.Timeline.Segments.Any(s => s.Plan.Id == crossDay.Id), "timetable reads existing saved plans");
+        form.Hide();
+        var midnightSeed = form.ScheduleSeed(23 * 60 + 17, 1440);
+        Check(midnightSeed.Start == new TimeOnly(23, 17) && midnightSeed.End == TimeOnly.MinValue && midnightSeed.EndDay == today.AddDays(1), "minute-precise selection at 24:00 becomes next-day midnight");
+        using (var seededEditor = new PlanEditor(midnightSeed with { Title = "选时计划", RepeatCount = 3 }, true)) {
+            seededEditor.SavePlan();
+            Check(seededEditor.Result?.EndDay == today.AddDays(1) && seededEditor.Result?.RepeatCount == 3, "timeline seed can save as an overnight long-term plan");
+        }
         var timedDaily = daily with { Start = new TimeOnly(9, 0), End = new TimeOnly(10, 0), EndDay = begin };
         var timedSingle = new PlanItem { Title = "另一项计划", Day = today, EndDay = today, Start = new TimeOnly(9, 30), End = new TimeOnly(10, 30) };
         Check(timedDaily.Overlaps(timedSingle) && timedSingle.Overlaps(timedDaily), "daily and ordinary overlap detected symmetrically");

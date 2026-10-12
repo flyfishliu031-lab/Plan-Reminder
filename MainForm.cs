@@ -19,6 +19,10 @@ internal sealed class MainForm : Form
     private readonly Label clock = Theme.Label("", Theme.Small, Theme.Muted);
     private readonly Button unscheduled = Theme.Button("待安排");
     private readonly Button longTerm = Theme.Button("长期计划");
+    private readonly Button timetable = Theme.Button("时间表");
+    private readonly DailyTimelineView timeline = new();
+    private readonly Panel viewHost = new() { Dock = DockStyle.Fill };
+    private bool showingTimeline;
     private readonly Label footer = Theme.Label("", Theme.Small, Theme.Muted);
     private readonly FlowLayoutPanel list = new() { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Dock = DockStyle.Fill };
     private readonly Panel notice = new() { Dock = DockStyle.Fill, BackColor = Theme.SoftAccent, Visible = false };
@@ -35,6 +39,7 @@ internal sealed class MainForm : Form
     internal CalendarView Calendar => calendar;
     internal FlowLayoutPanel PlanList => list;
     internal NotifyIcon TrayIcon => tray;
+    internal DailyTimelineView Timeline => timeline;
 
     public MainForm(PlanStore data, AppSettings? preferences = null)
     {
@@ -62,8 +67,13 @@ internal sealed class MainForm : Form
         tray.DoubleClick += (_, _) => RestoreWindow();
         Shown += (_, _) => tray.Visible = true;
         calendar.DateSelected += day => SelectDate(day);
-        unscheduled.Click += (_, _) => { showingSeries = false; selectedDay = null; RefreshViews(); };
+        unscheduled.Click += (_, _) => { showingTimeline = false; showingSeries = false; selectedDay = null; RefreshViews(); };
         longTerm.Click += (_, _) => ShowLongTerm();
+        timetable.Click += (_, _) => ShowTimeline();
+        timeline.DateRequested += SelectDate;
+        timeline.ListRequested += () => { showingTimeline = false; RefreshViews(); };
+        timeline.OpenRequested += ShowPlanDetails;
+        timeline.RangeSelected += (from, to) => EditPlan(null, ScheduleSeed(from, to));
         list.SizeChanged += (_, _) => ResizeCards();
         list.Layout += (_, _) => ResizeCards();
         list.SizeChanged += (_, _) =>
@@ -115,7 +125,7 @@ internal sealed class MainForm : Form
         var legend = Theme.Label("彩色圆点表示当天已有计划", Theme.Small, Theme.Muted); Row(legend, 20);
         var goToday = Theme.Button("回到今天");
         goToday.Click += (_, _) => SelectDate(DateOnly.FromDateTime(DateTime.Now));
-        Row(goToday, 10); Row(unscheduled, 10); Row(longTerm, 28);
+        Row(goToday, 10); Row(timetable, 10); Row(unscheduled, 10); Row(longTerm, 28);
         Row(Theme.Label("数据与设置", Theme.Small, Theme.Muted), 12);
         var backups = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty };
         backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36)); backups.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
@@ -175,7 +185,8 @@ internal sealed class MainForm : Form
             var available = Math.Max(1, content.ClientSize.Width - content.Padding.Horizontal);
             footer.MaximumSize = clock.MaximumSize = summary.MaximumSize = new Size(available, 0);
         };
-        content.Controls.Add(clock, 0, 0); content.Controls.Add(titleBar, 0, 1); content.Controls.Add(list, 0, 2);
+        viewHost.Controls.Add(list); viewHost.Controls.Add(timeline);
+        content.Controls.Add(clock, 0, 0); content.Controls.Add(titleBar, 0, 1); content.Controls.Add(viewHost, 0, 2);
         content.Controls.Add(notice, 0, 3); content.Controls.Add(footer, 0, 4);
         return content;
     }
@@ -185,7 +196,8 @@ internal sealed class MainForm : Form
         showingSeries = false; selectedDay = date; RefreshViews(true);
     }
 
-    internal void ShowLongTerm() { showingSeries = true; selectedDay = null; RefreshViews(); }
+    internal void ShowLongTerm() { showingTimeline = false; showingSeries = true; selectedDay = null; RefreshViews(); }
+    internal void ShowTimeline() { showingTimeline = true; showingSeries = false; selectedDay ??= today; RefreshViews(); }
 
     internal void RefreshViews(bool navigate = false)
     {
@@ -202,6 +214,10 @@ internal sealed class MainForm : Form
         longTerm.Text = $"长期计划  ·  {store.Plans.Count(p => p.IsRecurring)}";
         longTerm.BackColor = showingSeries ? Theme.SoftAccent : Color.White;
         longTerm.ForeColor = showingSeries ? Theme.Accent : Theme.Ink;
+        timetable.BackColor = showingTimeline ? Theme.SoftAccent : Color.White;
+        timetable.ForeColor = showingTimeline ? Theme.Accent : Theme.Ink;
+        timeline.Visible = showingTimeline; list.Visible = !showingTimeline;
+        if (showingTimeline) { timeline.BringToFront(); timeline.SetData(visible, selectedDay!.Value); }
         footer.Text = showingSeries ? "勾选记录今天完成 · 日历可恢复历史记录 · 删除会移除整个长期计划，可撤销" :
             "勾选划去 · Ctrl+N 添加 · Ctrl+Z 撤销删除";
         calendar.SetData(store.Plans, selectedDay, navigate);
@@ -217,11 +233,14 @@ internal sealed class MainForm : Form
         }
         foreach (var item in visible)
         {
-            var card = new PlanCard(item, selectedDay ?? today, showingSeries);
-            card.CompletionRequested += ToggleCompletion;
-            card.EditRequested += plan => EditPlan(plan);
-            card.DeleteRequested += DeletePlan;
-            list.Controls.Add(card);
+            var occurrences = !showingSeries && item.Start is not null && selectedDay is { } date ? item.Segments(date).Select(s => s.Occurrence) : new[] { selectedDay ?? today };
+            foreach (var occurrence in occurrences) {
+                var card = new PlanCard(item, occurrence, showingSeries);
+                card.CompletionRequested += plan => CompleteOn(plan, occurrence);
+                card.EditRequested += plan => EditPlan(plan);
+                card.DeleteRequested += DeletePlan;
+                list.Controls.Add(card);
+            }
         }
         ResizeCards(); list.ResumeLayout(true); ResizeCards();
         list.AutoScrollPosition = new Point(0, scrollPosition);
@@ -233,10 +252,16 @@ internal sealed class MainForm : Form
         foreach (Control control in list.Controls) if (control.Width != width) control.Width = width;
     }
 
-    private void EditPlan(PlanItem? existing)
+    internal PlanItem ScheduleSeed(int from, int to)
     {
-        var item = existing ?? new PlanItem { Day = showingSeries ? today : selectedDay,
-            RepeatCount = showingSeries ? 30 : null, Color = Palette.Next(store.Plans) };
+        var day = selectedDay ?? today;
+        return new PlanItem { Day = day, Start = TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(from)),
+            EndDay = day.AddDays(to == 1440 ? 1 : 0), End = TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(to % 1440)), Color = Palette.Next(store.Plans) };
+    }
+    private void EditPlan(PlanItem? existing, PlanItem? seed = null)
+    {
+        var item = existing ?? seed ?? (showingTimeline ? ScheduleSeed(540, 600) : new PlanItem { Day = showingSeries ? today : selectedDay,
+            RepeatCount = showingSeries ? 30 : null, Color = Palette.Next(store.Plans) });
         while (true)
         {
             using var editor = new PlanEditor(item, existing is null);
@@ -251,14 +276,27 @@ internal sealed class MainForm : Form
     }
 
     internal void ToggleCompletion(PlanItem item)
+        => CompleteOn(item, selectedDay ?? today);
+    private void CompleteOn(PlanItem item, DateOnly day)
     {
-        var day = selectedDay ?? today;
         Attempt(() =>
         {
             if (item.IsRecurring && day > today) throw new ArgumentException("未来日期的长期计划到当天才可记录完成。");
             store.Save(item.ToggleOn(day));
         });
         RefreshViews();
+    }
+
+    private void ShowPlanDetails(PlanItem item, DateOnly occurrence)
+    {
+        using var dialog = new Form { Text = "时间表 · 计划详情", Icon = Theme.AppIcon, Font = Theme.Body, BackColor = Theme.Canvas,
+            AutoScaleMode = AutoScaleMode.Dpi, AutoScaleDimensions = new SizeF(96, 96), ClientSize = new Size(620, 480), StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, ShowInTaskbar = false };
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(16) };
+        var card = new PlanCard(item, occurrence) { Dock = DockStyle.Top };
+        card.CompletionRequested += p => { dialog.Close(); CompleteOn(p, occurrence); };
+        card.EditRequested += p => { dialog.Close(); EditPlan(p); };
+        card.DeleteRequested += p => { dialog.Close(); DeletePlan(p); };
+        scroll.Controls.Add(card); dialog.Controls.Add(scroll); dialog.Shown += (_, _) => Theme.FitWindow(dialog); dialog.ShowDialog(this);
     }
 
     internal void DeletePlan(PlanItem item)
@@ -319,6 +357,7 @@ internal sealed class MainForm : Form
         var sign = offset < TimeSpan.Zero ? "−" : "+";
         clock.Text = $"系统时间  ·  {now:yyyy/MM/dd  HH:mm:ss}   (UTC{sign}{offset.Duration():hh\\:mm})";
         var date = DateOnly.FromDateTime(now);
+        if (showingTimeline) timeline.UpdateTime();
         if (date != today) { today = date; RefreshViews(); }
         if (Application.MessageLoop) CheckAlarms();
     }
@@ -345,7 +384,7 @@ internal sealed class MainForm : Form
     {
         foreach (var window in alarms.ToArray()) {
             var current = store.Plans.FirstOrDefault(p => p.Id == window.PlanId);
-            if (current?.Alarm is null || current.IsCompleteOn(window.Day) || current.SeriesFinished(today)) window.Close();
+            if (current?.Alarm is null || current.IsCompleteOn(window.Day) || current.GoalReached || current.Alarm.Mode == "after" && current.SeriesFinished(today)) window.Close();
         }
         foreach (var plan in store.Plans.ToArray()) {
             var now = DateTimeOffset.Now;

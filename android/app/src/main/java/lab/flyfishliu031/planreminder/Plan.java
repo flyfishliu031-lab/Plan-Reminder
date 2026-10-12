@@ -22,9 +22,18 @@ final class Plan {
     return repeatUntil != null || repeatCount != null;
   }
 
+  boolean goalReached() {
+    return repeatCount != null && dates.size() >= repeatCount;
+  }
+
   boolean finished(LocalDate today) {
     return recurring()
-        && (repeatUntil != null && today.isAfter(repeatUntil)
+        && (repeatUntil != null
+                && today.isAfter(
+                    repeatUntil.plusDays(
+                        endOffset() > 0 && LocalTime.MIDNIGHT.equals(end)
+                            ? endOffset() - 1
+                            : endOffset()))
             || repeatCount != null && dates.size() >= repeatCount);
   }
 
@@ -37,12 +46,31 @@ final class Plan {
   }
 
   boolean appears(LocalDate date) {
-    if (day == null) return false;
-    if (recurring()) return !date.isBefore(day) && !date.isAfter(lastDay());
-    return day.equals(date)
-        || start != null
-            && !day.atTime(start).isAfter(date.atTime(LocalTime.MAX))
-            && endDay.atTime(end).isAfter(date.atStartOfDay());
+    return start == null ? occurs(date) : !segments(date).isEmpty();
+  }
+
+  int endOffset() {
+    return day == null || endDay == null ? 0 : (int) ChronoUnit.DAYS.between(day, endDay);
+  }
+
+  boolean occurs(LocalDate date) {
+    return day != null && !date.isBefore(day) && !date.isAfter(lastDay());
+  }
+
+  List<DaySegment> segments(LocalDate date) {
+    List<DaySegment> result = new ArrayList<>();
+    if (start == null || end == null) return result;
+    LocalDate[] candidates =
+        recurring() ? new LocalDate[] {date.minusDays(1), date} : new LocalDate[] {day};
+    for (LocalDate occurrence : candidates) {
+      if (recurring() && !occurs(occurrence)) continue;
+      LocalDateTime from = (recurring() ? occurrence : day).atTime(start);
+      LocalDateTime to = (recurring() ? occurrence.plusDays(endOffset()) : endDay).atTime(end);
+      double first = Math.max(0, Duration.between(date.atStartOfDay(), from).toMillis() / 60000d);
+      double last = Math.min(1440, Duration.between(date.atStartOfDay(), to).toMillis() / 60000d);
+      if (first < last) result.add(new DaySegment(this, occurrence, date, first, last));
+    }
+    return result;
   }
 
   boolean checked(LocalDate date) {
@@ -53,7 +81,7 @@ final class Plan {
     Plan result = copy();
     if (!recurring()) result.completed = !completed;
     else {
-      if (!appears(date) || date.isAfter(LocalDate.now()))
+      if (!occurs(date) || date.isAfter(LocalDate.now()))
         throw new IllegalArgumentException("只能记录计划范围内已经到来的日期。");
       if (!result.dates.remove(date)) result.dates.add(date);
     }
@@ -86,7 +114,13 @@ final class Plan {
         fail("持续天数须为 1–3650 天。");
       if (repeatCount != null && (repeatCount < 1 || repeatCount > 10000))
         fail("完成次数须为 1–10000 次。");
-      if (start != null && !day.equals(endDay)) fail("长期计划的每天时间段须在同一天内。");
+      if (start != null
+          && (endOffset() > 1
+              || Duration.between(day.atTime(start), endDay.atTime(end))
+                      .compareTo(Duration.ofDays(1))
+                  > 0)) fail("每天重复的时间段最多 24 小时，可跨午夜到次日。");
+      if (repeatUntil != null && repeatUntil.plusDays(endOffset()).getYear() > 9998)
+        fail("长期计划结束时间超出可用日期范围。");
     }
     if (dates.size() > 10000) fail("完成记录最多 10000 个日期。");
     for (LocalDate date : dates)
@@ -99,18 +133,24 @@ final class Plan {
   boolean overlaps(Plan other) {
     if (id.equals(other.id) || completed || other.completed || start == null || other.start == null)
       return false;
+    if (!recurring() && !other.recurring())
+      return day.atTime(start).isBefore(other.endDay.atTime(other.end))
+          && endDay.atTime(end).isAfter(other.day.atTime(other.start));
     LocalDate first = day.isAfter(other.day) ? day : other.day;
-    LocalDate last = lastDay().isBefore(other.lastDay()) ? lastDay() : other.lastDay();
+    LocalDate leftLast = lastDay().plusDays(recurring() ? endOffset() : 0),
+        rightLast = other.lastDay().plusDays(other.recurring() ? other.endOffset() : 0);
+    LocalDate last = leftLast.isBefore(rightLast) ? leftLast : rightLast;
     long candidates =
-        Math.min(ChronoUnit.DAYS.between(first, last), dates.size() + other.dates.size() + 1L);
+        Math.min(
+            ChronoUnit.DAYS.between(first, last), 2L * (dates.size() + other.dates.size()) + 3);
     for (long n = 0; n <= candidates; n++) {
       LocalDate date = first.plusDays(n);
-      if (dates.contains(date) || other.dates.contains(date)) continue;
-      LocalDateTime a = (recurring() ? date : day).atTime(start),
-          b = (recurring() ? date : endDay).atTime(end);
-      LocalDateTime c = (other.recurring() ? date : other.day).atTime(other.start),
-          d = (other.recurring() ? date : other.endDay).atTime(other.end);
-      if (a.isBefore(d) && b.isAfter(c)) return true;
+      for (DaySegment a : segments(date))
+        for (DaySegment b : other.segments(date))
+          if (!checked(a.occurrence)
+              && !other.checked(b.occurrence)
+              && a.start < b.end
+              && a.end > b.start) return true;
     }
     return false;
   }
@@ -119,9 +159,11 @@ final class Plan {
     String text =
         start == null
             ? day == null ? "待安排" : "未设置时间段"
-            : day.equals(endDay)
-                ? clock(start) + " — " + clock(end)
-                : day + " " + clock(start) + " — " + endDay + " " + clock(end);
+            : recurring()
+                ? "每天 " + clock(start) + " — " + (endOffset() > 0 ? "次日 " : "") + clock(end)
+                : day.equals(endDay)
+                    ? clock(start) + " — " + clock(end)
+                    : day + " " + clock(start) + " — " + endDay + " " + clock(end);
     return text
         + (durationMinutes == null ? "" : " · 预计 " + durationMinutes + " 分钟")
         + (alarm == null ? "" : "\n" + alarm.description());

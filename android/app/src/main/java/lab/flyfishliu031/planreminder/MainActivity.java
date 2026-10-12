@@ -32,7 +32,9 @@ public final class MainActivity extends Activity {
 
   PlanStore store;
   LocalDate selected = LocalDate.now();
-  int mode; // 0: selected date, 1: unscheduled, 2: long-term overview.
+  int mode; // 0: selected date, 1: unscheduled, 2: long-term overview, 3: timetable.
+  DailyTimelineView timeline;
+  ScrollView mainScroll;
   boolean ready, busy;
   LinearLayout root, body, list, footer;
   TextView clock, heading;
@@ -49,6 +51,7 @@ public final class MainActivity extends Activity {
                 ZonedDateTime.now()
                     .format(DateTimeFormatter.ofPattern("MM月dd日 EEEE · HH:mm", Locale.CHINA)));
           if (ready && editor == null && !LocalDate.now().equals(lastToday)) render();
+          if (timeline != null) timeline.invalidate();
           lastToday = LocalDate.now();
           handler.postDelayed(this, 30000);
         }
@@ -69,6 +72,7 @@ public final class MainActivity extends Activity {
     inset(root, getWindow());
     setContentView(root);
     ScrollView scroll = new ScrollView(this);
+    mainScroll = scroll;
     scroll.setFillViewport(true);
     body = column();
     body.setPadding(dp(20), dp(20), dp(20), dp(16));
@@ -159,6 +163,7 @@ public final class MainActivity extends Activity {
   void render() {
     if (isDestroyed() || !ready) return;
     body.removeAllViews();
+    timeline = null;
     footer.removeAllViews();
     LinearLayout top = row();
     TextView brand = text("计划表", 30, INK);
@@ -193,7 +198,7 @@ public final class MainActivity extends Activity {
                 selected,
                 date -> {
                   selected = date;
-                  mode = 0;
+                  if (mode != 3) mode = 0;
                   render();
                 }));
     dateRow.addView(dateButton, new LinearLayout.LayoutParams(0, -2, 1));
@@ -201,29 +206,37 @@ public final class MainActivity extends Activity {
     today.setOnClickListener(
         v -> {
           selected = LocalDate.now();
-          mode = 0;
+          if (mode != 3) mode = 0;
           render();
         });
     dateRow.addView(today);
     add(body, dateRow, 0, 12);
     LinearLayout tabs = row();
-    String[] labels = {"当天计划", "待安排", "长期计划"};
-    for (int i = 0; i < 3; i++) {
-      final int index = i;
-      Button b = button(labels[i], mode == i);
+    String[] labels = {"当天计划", "时间表", "待安排", "长期计划"};
+    int[] modes = {0, 3, 1, 2};
+    for (int i = 0; i < 4; i++) {
+      if (i == 2) {
+        add(body, tabs, 0, 8);
+        tabs = row();
+      }
+      final int index = modes[i];
+      Button b = button(labels[i], mode == index);
       b.setOnClickListener(
           v -> {
             mode = index;
             render();
           });
       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
-      if (i < 2) lp.setMarginEnd(dp(8));
+      if (i % 2 == 0) lp.setMarginEnd(dp(8));
       tabs.addView(b, lp);
     }
     add(body, tabs, 0, 24);
     List<Plan> plans = store.all();
     plans.removeIf(
-        p -> mode == 0 ? !p.appears(selected) : mode == 1 ? p.day != null : !p.recurring());
+        p ->
+            mode == 0 || mode == 3
+                ? !p.appears(selected)
+                : mode == 1 ? p.day != null : !p.recurring());
     plans.sort(
         Comparator.comparing(
                 (Plan p) -> mode == 2 ? p.day : p.recurring() ? selected : p.day,
@@ -232,14 +245,17 @@ public final class MainActivity extends Activity {
             .thenComparing(p -> p.createdAt));
     heading =
         text(
-            (mode == 0 ? "这一天的安排" : mode == 1 ? "留给未来的想法" : "每天，一点进步") + " · " + plans.size(),
+            (mode == 3 ? "全天时间表" : mode == 0 ? "这一天的安排" : mode == 1 ? "留给未来的想法" : "每天，一点进步")
+                + " · "
+                + plans.size(),
             18,
             INK);
     heading.setTypeface(null, Typeface.BOLD);
     add(body, heading, 0, 12);
     list = column();
     body.addView(list);
-    if (plans.isEmpty()) {
+    if (mode == 3) renderTimeline(plans);
+    else if (plans.isEmpty()) {
       LinearLayout empty = column();
       empty.setPadding(dp(24), dp(28), dp(24), dp(28));
       empty.setBackground(surface(Color.WHITE, LINE));
@@ -247,7 +263,13 @@ public final class MainActivity extends Activity {
       add(empty, text(mode == 2 ? "建立每天重复的计划，记录每一天的进步。" : "添加一件想做的事，也可以先不安排时间。", 16, MUTED), 12, 0);
       list.addView(empty);
     }
-    for (Plan p : plans) add(list, card(p), 0, 12);
+    if (mode != 3)
+      for (Plan p : plans) {
+        if (mode == 0 && p.start != null)
+          for (DaySegment s : p.segments(selected))
+            add(list, card(p, s.occurrence, () -> {}), 0, 12);
+        else add(list, card(p), 0, 12);
+      }
     if (deleted != null && SystemClock.elapsedRealtime() < undoUntil) {
       LinearLayout undo = row();
       TextView info = text("计划已删除", 14, MUTED);
@@ -268,13 +290,21 @@ public final class MainActivity extends Activity {
     }
     Button add = button("＋ 添加计划", true);
     add.setEnabled(!busy);
-    add.setOnClickListener(v -> new EditorForm(this, null, null));
+    add.setOnClickListener(
+        v -> {
+          if (mode == 3) addTimelinePlan(540, 600);
+          else new EditorForm(this, null, null);
+        });
     footer.addView(add, new LinearLayout.LayoutParams(-1, -2));
     root.setEnabled(!busy);
   }
 
   private View card(Plan p) {
     LocalDate date = mode == 2 ? LocalDate.now() : selected;
+    return card(p, date, () -> {});
+  }
+
+  private View card(Plan p, LocalDate date, Runnable dismiss) {
     boolean ended = mode == 2 && p.finished(LocalDate.now()), done = ended || p.checked(date);
     LinearLayout card = column();
     card.setPadding(dp(16), dp(16), dp(16), dp(8));
@@ -285,12 +315,15 @@ public final class MainActivity extends Activity {
     check.setMinimumHeight(dp(48));
     check.setChecked(done);
     check.setEnabled(
-        !busy && (!p.recurring() || !ended && !date.isAfter(LocalDate.now()) && p.appears(date)));
+        !busy && (!p.recurring() || !ended && !date.isAfter(LocalDate.now()) && p.occurs(date)));
     check.setContentDescription(
         (done ? "恢复计划：" : "完成计划：") + p.title + (p.recurring() ? "，" + date : ""));
     check.setOnCheckedChangeListener(
         (b, c) -> {
-          if (!busy) perform(() -> store.save(p.toggle(date)), null);
+          if (!busy) {
+            dismiss.run();
+            perform(() -> store.save(p.toggle(date)), null);
+          }
         });
     titleRow.addView(check);
     CompletedText title = new CompletedText(this, done);
@@ -312,6 +345,7 @@ public final class MainActivity extends Activity {
       add(card, badge, 8, 4);
     }
     add(card, text(p.timing(), 14, MUTED), 8, 0);
+    if (p.recurring()) add(card, text("本次归属 " + date + "，按开始日期记录完成", 14, MUTED), 6, 0);
     if (p.recurring())
       add(
           card,
@@ -335,35 +369,143 @@ public final class MainActivity extends Activity {
     }
     Button edit = button("编辑", false);
     edit.setEnabled(!busy);
-    edit.setOnClickListener(v -> new EditorForm(this, p, null));
+    edit.setOnClickListener(
+        v -> {
+          dismiss.run();
+          new EditorForm(this, p, null);
+        });
     actions.addView(edit, new LinearLayout.LayoutParams(0, -2, 1));
     Button delete = button("删除", false);
     delete.setTextColor(DANGER);
     delete.setEnabled(!busy);
     delete.setOnClickListener(
-        v ->
-            new AlertDialog.Builder(this)
-                .setTitle(p.recurring() ? "删除整个长期计划？" : "删除计划？")
-                .setMessage(p.recurring() ? "将同时删除全部完成记录，删除后 10 秒内可撤销。" : "删除后 10 秒内可撤销。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton(
-                    "删除",
-                    (d, w) ->
-                        perform(
-                            () -> store.delete(p.id),
-                            () -> {
-                              deleted = p;
-                              undoUntil = SystemClock.elapsedRealtime() + 10000;
-                              handler.postDelayed(
-                                  () -> {
-                                    if (editor == null) render();
-                                  },
-                                  10050);
-                            }))
-                .show());
+        v -> {
+          dismiss.run();
+          new AlertDialog.Builder(this)
+              .setTitle(p.recurring() ? "删除整个长期计划？" : "删除计划？")
+              .setMessage(p.recurring() ? "将同时删除全部完成记录，删除后 10 秒内可撤销。" : "删除后 10 秒内可撤销。")
+              .setNegativeButton("取消", null)
+              .setPositiveButton(
+                  "删除",
+                  (d, w) ->
+                      perform(
+                          () -> store.delete(p.id),
+                          () -> {
+                            deleted = p;
+                            undoUntil = SystemClock.elapsedRealtime() + 10000;
+                            handler.postDelayed(
+                                () -> {
+                                  if (editor == null) render();
+                                },
+                                10050);
+                          }))
+              .show();
+        });
     actions.addView(delete, new LinearLayout.LayoutParams(0, -2, 1));
     add(card, actions, 8, 0);
     return card;
+  }
+
+  Plan scheduleSeed(int from, int to) {
+    Plan p = new Plan();
+    p.day = selected;
+    p.start = LocalTime.of(from / 60, from % 60);
+    p.endDay = selected.plusDays(to == 1440 ? 1 : 0);
+    p.end = LocalTime.of((to % 1440) / 60, to % 60);
+    p.color = Plan.COLORS[store.all().size() % Plan.COLORS.length];
+    for (String color : Plan.COLORS)
+      if (store.all().stream().noneMatch(plan -> plan.color.equalsIgnoreCase(color))) {
+        p.color = color;
+        break;
+      }
+    return p;
+  }
+
+  void addTimelinePlan(int from, int to) {
+    if (!busy) new EditorForm(this, scheduleSeed(from, to), null, true);
+  }
+
+  void openTimelinePlan(Plan p, LocalDate occurrence) {
+    if (busy) return;
+    AlertDialog dialog =
+        new AlertDialog.Builder(this)
+            .setTitle("计划详情 · " + occurrence)
+            .setNegativeButton("关闭", null)
+            .create();
+    ScrollView scroll = new ScrollView(this);
+    scroll.addView(card(p, occurrence, dialog::dismiss));
+    dialog.setView(scroll);
+    dialog.show();
+  }
+
+  private void renderTimeline(List<Plan> plans) {
+    LinearLayout nav = row();
+    Button previous = button("前一天", false), next = button("后一天", false);
+    previous.setEnabled(selected.isAfter(LocalDate.of(1753, 1, 1)));
+    next.setEnabled(selected.isBefore(LocalDate.of(9998, 12, 31)));
+    previous.setOnClickListener(
+        v -> {
+          selected = selected.minusDays(1);
+          render();
+        });
+    next.setOnClickListener(
+        v -> {
+          selected = selected.plusDays(1);
+          render();
+        });
+    nav.addView(previous, new LinearLayout.LayoutParams(0, -2, 1));
+    nav.addView(next, new LinearLayout.LayoutParams(0, -2, 1));
+    add(list, nav, 0, 8);
+    add(list, text("先点空白处选择开始，再点结束；也可点下方添加按钮输入时间。", 14, MUTED), 0, 12);
+    timeline = new DailyTimelineView(this, selected, plans);
+    if (!timeline.segments.isEmpty()) {
+      LinearLayout selection = row();
+      Spinner picker = new Spinner(this);
+      String[] titles = timeline.segments.stream().map(DaySegment::caption).toArray(String[]::new);
+      ArrayAdapter<String> adapter =
+          new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, titles);
+      adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+      picker.setAdapter(adapter);
+      picker.setMinimumHeight(dp(48));
+      picker.setContentDescription("时间表中的计划，短计划也可在这里选择");
+      selection.addView(picker, new LinearLayout.LayoutParams(0, -2, 1));
+      Button open = button("查看", false);
+      java.util.List<DaySegment> segments = timeline.segments;
+      open.setOnClickListener(
+          v -> {
+            DaySegment s = segments.get(picker.getSelectedItemPosition());
+            openTimelinePlan(s.plan, s.occurrence);
+          });
+      selection.addView(open);
+      add(list, selection, 0, 12);
+    }
+    Button now = button("定位当前时段", false);
+    DailyTimelineView view = timeline;
+    now.setOnClickListener(
+        v -> {
+          int minute =
+              selected.equals(LocalDate.now())
+                  ? Math.max(0, LocalTime.now().getHour() * 60 - 60)
+                  : 480;
+          mainScroll.smoothScrollTo(
+              0, body.getTop() + list.getTop() + view.getTop() + (int) (minute * view.hour / 60));
+        });
+    add(list, now, 0, 12);
+    java.util.List<Plan> untimed = new ArrayList<>();
+    for (Plan p : plans) if (p.start == null) untimed.add(p);
+    Button pending = button("未安排时间 · " + untimed.size(), false);
+    pending.setEnabled(!untimed.isEmpty());
+    pending.setOnClickListener(
+        v ->
+            new AlertDialog.Builder(this)
+                .setTitle("当天未安排时间的计划")
+                .setItems(
+                    untimed.stream().map(p -> p.title).toArray(String[]::new),
+                    (d, w) -> openTimelinePlan(untimed.get(w), selected))
+                .setNegativeButton("关闭", null)
+                .show());
+    add(list, pending, 0, 12);
+    add(list, timeline, 0, 12);
   }
 
   private void history(Plan p) {
@@ -393,7 +535,7 @@ public final class MainActivity extends Activity {
               if (w == 3) AlarmScheduler.permissions(this);
               else if (w == 2)
                 new AlertDialog.Builder(this)
-                    .setTitle("计划表 · v1.5.0")
+                    .setTitle("计划表 · v1.6.0")
                     .setMessage(
                         "离线保存于本机，无需账号。\n\n"
                             + "每天重复的长期计划可按持续天数或完成次数结束。通过 JSON 备份与 Windows 版手动迁移；两台设备不会自动同步。\n\n"

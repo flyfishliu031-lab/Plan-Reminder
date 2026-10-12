@@ -81,7 +81,10 @@ final class AlarmScheduler {
     if (exactAllowed(c) && notificationsAllowed(c)) {
       Instant now = Instant.now();
       for (Plan p : store.all()) {
-        if (p.alarm == null || p.completed || p.finished(LocalDate.now())) continue;
+        if (p.alarm == null
+            || p.completed
+            || p.goalReached()
+            || p.alarm.mode.equals("after") && p.finished(LocalDate.now())) continue;
         long countdown = p.alarm.mode.equals("after") ? countdownTrigger(c, p, now) : -1;
         Instant occurrence =
             p.alarm.mode.equals("after") ? countdown < 0 ? null : p.alarm.at : p.alarm.next(p, now);

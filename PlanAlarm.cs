@@ -24,7 +24,7 @@ public sealed record PlanAlarm
     // Only catch up recent alarms. Old backups and missed days must not produce an alarm storm.
     public DateTimeOffset? Next(PlanItem plan, DateTimeOffset now)
     {
-        if (plan.IsCompleted || plan.SeriesFinished(DateOnly.FromDateTime(now.LocalDateTime))) return null;
+        if (plan.IsCompleted || plan.GoalReached || Mode == "after" && plan.SeriesFinished(DateOnly.FromDateTime(now.LocalDateTime))) return null;
         var earliest = now.AddMinutes(-5);
         bool Eligible(DateTimeOffset time) => time >= earliest && (FiredAt is null || time > FiredAt);
         if (Mode == "after") return At is { } at && Eligible(at) &&
@@ -33,16 +33,19 @@ public sealed record PlanAlarm
             var time = Local(Mode == "start" ? plan.StartsAt!.Value : plan.EndsAt!.Value);
             return Eligible(time) ? time : null;
         }
-        var first = DateOnly.FromDateTime(earliest.LocalDateTime);
+        var first = DateOnly.FromDateTime(earliest.LocalDateTime).AddDays(Mode == "end" ? -plan.EndOffset : 0);
         if (first < plan.Day) first = plan.Day!.Value;
         for (var i = 0; i <= plan.CompletionDates.Count + 2 && first.Year <= 9998; i++, first = first.AddDays(1)) {
-            if (!plan.AppearsOn(first)) return null;
+            if (!plan.OccursOn(first)) return null;
             if (plan.IsCompleteOn(first)) continue;
-            var time = Local(first.ToDateTime(Mode == "start" ? plan.Start!.Value : plan.End!.Value));
+            var time = Local(first.AddDays(Mode == "end" ? plan.EndOffset : 0).ToDateTime(Mode == "start" ? plan.Start!.Value : plan.End!.Value));
             if (Eligible(time)) return time;
         }
         return null;
     }
+
+    internal DateOnly Occurrence(PlanItem plan, DateTimeOffset due) => DateOnly.FromDateTime(due.LocalDateTime)
+        .AddDays(plan.IsRecurring && Mode == "end" ? -plan.EndOffset : 0);
 
     private static DateTimeOffset Local(DateTime time)
     {

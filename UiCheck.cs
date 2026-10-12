@@ -21,6 +21,21 @@ internal static class UiCheck
         main.Show(); Application.DoEvents();
         Capture(main, Path.Combine(directory, "main.png"));
         CheckText(main);
+        var timelineDay = DateOnly.FromDateTime(DateTime.Now);
+        store.Save(new PlanItem { Title = "专注学习", Day = timelineDay, EndDay = timelineDay, Start = new TimeOnly(9, 30), End = new TimeOnly(11, 0), Color = Palette.Colors[2] });
+        store.Save(new PlanItem { Title = "复习笔记", Day = timelineDay, EndDay = timelineDay, Start = new TimeOnly(9, 15), End = new TimeOnly(10, 0), Color = Palette.Colors[1] });
+        store.Save(new PlanItem { Title = "每天睡前阅读", Day = timelineDay.AddDays(-1), EndDay = timelineDay, Start = new TimeOnly(23, 0), End = new TimeOnly(1, 0), RepeatCount = 30, CompletedDates = [timelineDay.AddDays(-1)], Color = Palette.Colors[4] });
+        main.ShowTimeline(); Application.DoEvents(); CheckText(main);
+        main.Timeline.ScrollTo(480); Application.DoEvents(); Capture(main, Path.Combine(directory, "timetable.png"));
+        main.Timeline.ScrollTo(1380); Application.DoEvents(); Capture(main, Path.Combine(directory, "timetable-night.png"));
+        main.Timeline.ScrollTo(480);
+        main.ClientSize = new Size(Theme.Px(main, 840), Theme.Px(main, 500)); Application.DoEvents(); CheckText(main);
+        var timelineScroll = Descendants(main.Timeline).OfType<Panel>().Single(p => p.AutoScroll);
+        if (timelineScroll.HorizontalScroll.Visible || timelineScroll.ClientSize.Height < Theme.Px(main, 80))
+            throw new InvalidOperationException($"Timetable viewport too small or horizontally scrolling: {timelineScroll.ClientSize}, canvas={timelineScroll.Controls[0].Bounds}");
+        Capture(main, Path.Combine(directory, "timetable-small.png"));
+        main.ClientSize = new Size(Theme.Px(main, 1180), Theme.Px(main, 780));
+        Descendants(main.Timeline).OfType<Button>().Single(b => b.Text == "计划列表").PerformClick(); Application.DoEvents();
         var day = DateOnly.FromDateTime(DateTime.Now);
         var sample = new PlanItem { Title = "为明天准备一份清晰的计划", Notes = "列出重要事项，给专注和休息都留一点时间。", Day = day,
             Color = Palette.Colors[2], Start = new TimeOnly(9, 0), End = new TimeOnly(10, 0), EndDay = day, DurationMinutes = 60 };

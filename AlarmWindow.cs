@@ -10,7 +10,7 @@ internal sealed class AlarmWindow : Form
 
     internal AlarmWindow(PlanItem plan, DateTimeOffset due)
     {
-        PlanId = plan.Id; Day = DateOnly.FromDateTime(plan.Alarm!.Mode == "after" ? DateTime.Now : due.LocalDateTime); sound = plan.Alarm.Sound;
+        PlanId = plan.Id; Day = plan.Alarm!.Mode == "after" ? DateOnly.FromDateTime(DateTime.Now) : plan.Alarm.Occurrence(plan, due); sound = plan.Alarm.Sound;
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
         Text = "计划表 · 闹钟"; Icon = Theme.AppIcon; Font = Theme.Body;
         BackColor = Theme.Canvas; ForeColor = Theme.Ink;
