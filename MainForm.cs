@@ -36,6 +36,12 @@ internal sealed class MainForm : Form
     private bool cardLayoutQueued;
     private bool showingSeries;
     private PlanItem? deleted;
+    private (Guid Id, DateOnly Day, bool WasComplete)? completionUndo;
+    private readonly TextBox search = new() { PlaceholderText = "搜索计划或备注", AccessibleName = "搜索计划或备注", Dock = DockStyle.Fill };
+    private readonly ComboBox stateFilter = new() { DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "完成状态筛选", Dock = DockStyle.Fill };
+    private readonly TableLayoutPanel filters = new() { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, RowCount = 1, Margin = new Padding(0, 10, 0, 0) };
+    private string? feedback;
+    private readonly FlowLayoutPanel dateNavigation = new() { AutoSize = true, Dock = DockStyle.Top, WrapContents = true, Margin = new Padding(0, 8, 0, 0) };
     internal CalendarView Calendar => calendar;
     internal FlowLayoutPanel PlanList => list;
     internal NotifyIcon TrayIcon => tray;
@@ -47,6 +53,8 @@ internal sealed class MainForm : Form
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
         store = data;
         settings = preferences ?? new AppSettings(Path.GetDirectoryName(data.FilePath)!);
+        showingTimeline = settings.View == "timetable"; showingSeries = settings.View == "series";
+        if (settings.View is "series" or "unscheduled") selectedDay = null;
         Text = $"计划表 · v{Program.AppVersion}"; Font = Theme.Body; BackColor = Theme.Canvas; ForeColor = Theme.Ink;
         ClientSize = new Size(1180, 780); MinimumSize = new Size(840, 500);
         StartPosition = FormStartPosition.CenterScreen;
@@ -67,11 +75,10 @@ internal sealed class MainForm : Form
         tray.DoubleClick += (_, _) => RestoreWindow();
         Shown += (_, _) => tray.Visible = true;
         calendar.DateSelected += day => SelectDate(day);
-        unscheduled.Click += (_, _) => { showingTimeline = false; showingSeries = false; selectedDay = null; RefreshViews(); };
+        unscheduled.Click += (_, _) => { showingTimeline = false; showingSeries = false; selectedDay = null; RememberView(); RefreshViews(); };
         longTerm.Click += (_, _) => ShowLongTerm();
         timetable.Click += (_, _) => ShowTimeline();
-        timeline.DateRequested += SelectDate;
-        timeline.ListRequested += () => { showingTimeline = false; RefreshViews(); };
+        timeline.ListRequested += () => { showingTimeline = false; RememberView(); RefreshViews(); };
         timeline.OpenRequested += ShowPlanDetails;
         timeline.RangeSelected += (from, to) => EditPlan(null, ScheduleSeed(from, to));
         list.SizeChanged += (_, _) => ResizeCards();
@@ -89,7 +96,8 @@ internal sealed class MainForm : Form
         KeyDown += (_, e) =>
         {
             if (e.Control && e.KeyCode == Keys.N) { e.SuppressKeyPress = true; EditPlan(null); }
-            if (e.Control && e.KeyCode == Keys.Z && deleted is not null) { e.SuppressKeyPress = true; UndoDelete(); }
+            if (e.Control && e.KeyCode == Keys.Z && (deleted is not null || completionUndo is not null)) { e.SuppressKeyPress = true; UndoDelete(); }
+            if (e.Control && e.KeyCode == Keys.F) { e.SuppressKeyPress = true; showingTimeline = false; RefreshViews(); search.Focus(); }
         };
         ResumeLayout(true);
         Load += (_, _) => Theme.FitWindow(this);
@@ -159,14 +167,14 @@ internal sealed class MainForm : Form
     {
         var content = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(32, 24, 32, 20), Margin = Padding.Empty
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(24, 20, 24, 16), Margin = Padding.Empty
         };
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         content.RowStyles.Add(new RowStyle(SizeType.AutoSize)); content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         content.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); content.RowStyles.Add(noticeRow);
         content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        clock.Dock = DockStyle.Top; clock.Margin = new Padding(0, 0, 0, 18);
-        var titleBar = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, RowCount = 2, Margin = new Padding(0, 0, 0, 24) };
+        clock.Dock = DockStyle.Top; clock.Margin = new Padding(0, 0, 0, 10);
+        var titleBar = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, RowCount = 4, Margin = new Padding(0, 0, 0, 14) };
         titleBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); titleBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 144));
         titleBar.RowStyles.Add(new RowStyle(SizeType.AutoSize)); titleBar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         heading.Dock = DockStyle.Top; heading.Margin = new Padding(0, 0, 12, 10);
@@ -175,6 +183,23 @@ internal sealed class MainForm : Form
         var add = Theme.Button("＋ 添加计划", true); add.Dock = DockStyle.Top; add.Margin = new Padding(0, 5, 0, 0);
         add.Click += (_, _) => EditPlan(null);
         titleBar.Controls.Add(heading, 0, 0); titleBar.Controls.Add(add, 1, 0); titleBar.Controls.Add(summary, 0, 1); titleBar.SetColumnSpan(summary, 2);
+        filters.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46)); filters.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); filters.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112)); filters.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 68));
+        search.Margin = new Padding(0, 0, 8, 0); stateFilter.Margin = new Padding(0, 0, 8, 0);
+        stateFilter.Items.AddRange(["全部", "未完成", "已完成"]); stateFilter.SelectedIndex = 0;
+        var clear = Theme.Button("清除"); clear.Width = 64; clear.Height = 30; clear.Font = Theme.Small; clear.Padding = new Padding(4, 0, 4, 0); clear.Dock = DockStyle.Fill;
+        clear.Click += (_, _) => ClearFilters();
+        clear.Enabled = false;
+        search.TextChanged += (_, _) => { clear.Enabled = search.Text.Length > 0 || stateFilter.SelectedIndex != 0; RefreshViews(); };
+        stateFilter.SelectedIndexChanged += (_, _) => { clear.Enabled = search.Text.Length > 0 || stateFilter.SelectedIndex != 0; RefreshViews(); };
+        var searchLabel = Theme.Label("搜索", Theme.Small, Theme.Muted); searchLabel.AutoSize = false; searchLabel.Dock = DockStyle.Fill; searchLabel.TextAlign = ContentAlignment.MiddleLeft;
+        filters.Controls.Add(searchLabel, 0, 0); filters.Controls.Add(search, 1, 0); filters.Controls.Add(stateFilter, 2, 0); filters.Controls.Add(clear, 3, 0);
+        titleBar.Controls.Add(filters, 0, 2); titleBar.SetColumnSpan(filters, 2);
+        foreach (var (text, offset) in new[] { ("前一天", -1), ("后一天", 1), ("今天", 0) }) {
+            var button = Theme.Button(text); button.Font = Theme.Small; button.Height = 30; button.Width = 76; button.Padding = new Padding(6, 0, 6, 0); button.Margin = new Padding(0, 0, 8, 0);
+            button.Click += (_, _) => { var date = selectedDay ?? today; var target = offset == 0 ? today : date.AddDays(offset); if (target.Year is >= 1753 and <= 9998) SelectDate(target); };
+            dateNavigation.Controls.Add(button);
+        }
+        titleBar.Controls.Add(dateNavigation, 0, 3); titleBar.SetColumnSpan(dateNavigation, 2);
         noticeText.AutoSize = false; noticeText.Dock = DockStyle.Fill; noticeText.TextAlign = ContentAlignment.MiddleLeft;
         noticeText.Padding = new Padding(12, 0, 0, 0); noticeText.AutoEllipsis = true;
         undo.Dock = DockStyle.Right; undo.Width = 80; undo.BackColor = notice.BackColor; undo.FlatAppearance.BorderSize = 0;
@@ -193,11 +218,20 @@ internal sealed class MainForm : Form
 
     internal void SelectDate(DateOnly date)
     {
-        showingSeries = false; selectedDay = date; RefreshViews(true);
+        showingSeries = false; selectedDay = date; RememberView(); RefreshViews(true);
     }
 
-    internal void ShowLongTerm() { showingTimeline = false; showingSeries = true; selectedDay = null; RefreshViews(); }
-    internal void ShowTimeline() { showingTimeline = true; showingSeries = false; selectedDay ??= today; RefreshViews(); }
+    internal void ShowLongTerm() { showingTimeline = false; showingSeries = true; selectedDay = null; RememberView(); RefreshViews(); }
+    internal void ShowTimeline() { showingTimeline = true; showingSeries = false; selectedDay ??= today; RememberView(); RefreshViews(); }
+    private void RememberView()
+    {
+        var view = showingTimeline ? "timetable" : showingSeries ? "series" : selectedDay is null ? "unscheduled" : "plans";
+        if (settings.View == view) return;
+        try { settings.Save(settings.ExitOnClose, view); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { feedback = "视图已切换，但偏好未保存。"; }
+    }
+    internal void ClearFilters() { search.Text = ""; stateFilter.SelectedIndex = 0; }
+    internal void FilterPlans(string query, int state) { search.Text = query; stateFilter.SelectedIndex = state; }
 
     internal void RefreshViews(bool navigate = false)
     {
@@ -216,33 +250,42 @@ internal sealed class MainForm : Form
         longTerm.ForeColor = showingSeries ? Theme.Accent : Theme.Ink;
         timetable.BackColor = showingTimeline ? Theme.SoftAccent : Color.White;
         timetable.ForeColor = showingTimeline ? Theme.Accent : Theme.Ink;
+        filters.Visible = !showingTimeline;
+        dateNavigation.Visible = selectedDay is not null;
         timeline.Visible = showingTimeline; list.Visible = !showingTimeline;
         if (showingTimeline) { timeline.BringToFront(); timeline.SetData(visible, selectedDay!.Value); }
         footer.Text = showingSeries ? "勾选记录今天完成 · 日历可恢复历史记录 · 删除会移除整个长期计划，可撤销" :
-            "勾选划去 · Ctrl+N 添加 · Ctrl+Z 撤销删除";
+            "勾选划去 · Ctrl+N 添加 · Ctrl+F 搜索 · Ctrl+Z 撤销";
+        if (feedback is not null) footer.Text = feedback;
         calendar.SetData(store.Plans, selectedDay, navigate);
         // ponytail: redraw this day's cards; virtualize if a day routinely holds hundreds of plans.
         list.SuspendLayout();
         foreach (Control control in list.Controls.Cast<Control>().ToArray()) { list.Controls.Remove(control); control.Dispose(); }
-        if (visible.Length == 0)
-        {
-            var empty = new SurfacePanel { Height = Theme.Px(this, 220), Margin = Padding.Empty };
-            var message = Theme.Label("暂无计划\n\n点击“添加计划”开始安排", Theme.Body, Theme.Muted);
-            message.AutoSize = false; message.Dock = DockStyle.Fill; message.TextAlign = ContentAlignment.MiddleCenter;
-            empty.Controls.Add(message); list.Controls.Add(empty);
-        }
+        var shown = 0;
+        var query = search.Text.Trim();
         foreach (var item in visible)
         {
+            if (query.Length > 0 && !item.Title.Contains(query, StringComparison.OrdinalIgnoreCase) && !item.Notes.Contains(query, StringComparison.OrdinalIgnoreCase)) continue;
             var occurrences = !showingSeries && item.Start is not null && selectedDay is { } date ? item.Segments(date).Select(s => s.Occurrence) : new[] { selectedDay ?? today };
             foreach (var occurrence in occurrences) {
+                var done = showingSeries ? item.SeriesFinished(today) : item.IsCompleteOn(occurrence);
+                if (stateFilter.SelectedIndex == 1 && done || stateFilter.SelectedIndex == 2 && !done) continue;
                 var card = new PlanCard(item, occurrence, showingSeries);
                 card.CompletionRequested += plan => CompleteOn(plan, occurrence);
                 card.EditRequested += plan => EditPlan(plan);
                 card.DeleteRequested += DeletePlan;
-                list.Controls.Add(card);
+                list.Controls.Add(card); shown++;
             }
         }
+        if (shown == 0)
+        {
+            var empty = new SurfacePanel { Height = Theme.Px(this, 220), Margin = Padding.Empty };
+            var message = Theme.Label(visible.Length == 0 ? "暂无计划\n\n点击“添加计划”开始安排" : "没有匹配的计划\n\n点击“清除”恢复全部计划", Theme.Body, Theme.Muted);
+            message.AutoSize = false; message.Dock = DockStyle.Fill; message.TextAlign = ContentAlignment.MiddleCenter;
+            empty.Controls.Add(message); list.Controls.Add(empty);
+        }
         ResizeCards(); list.ResumeLayout(true); ResizeCards();
+        if (!showingTimeline && (query.Length > 0 || stateFilter.SelectedIndex != 0)) summary.Text = $"{shown} 项匹配 · 共 {visible.Length} 项计划";
         list.AutoScrollPosition = new Point(0, scrollPosition);
     }
 
@@ -267,11 +310,14 @@ internal sealed class MainForm : Form
             using var editor = new PlanEditor(item, existing is null);
             if (editor.ShowDialog(this) != DialogResult.OK || editor.Result is null) return;
             item = editor.Result;
-            if (store.Plans.Any(p => item.Overlaps(p)) && MessageBox.Show(this,
-                "此时间段与其他未完成计划重叠。仍要保存吗？", "时间重叠", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
-                continue;
+            var conflicts = store.Plans.Where(p => item.Overlaps(p)).Take(3).ToArray();
+            if (conflicts.Length > 0 && !Confirm("时间重叠", "与以下计划重叠：\n" + string.Join("\n", conflicts.Select(p => p.Title.Length > 80 ? p.Title[..80] + "…" : p.Title)), "仍然保存", "修改时间")) continue;
             if (!Attempt(() => store.Save(item))) continue;
-            RefreshViews(); return;
+            if (item.Day is null) { selectedDay = null; showingTimeline = showingSeries = false; }
+            else if (!(showingSeries && item.IsRecurring) && (selectedDay is null || !item.AppearsOn(selectedDay.Value))) { selectedDay = item.Day; showingSeries = false; }
+            if (item.Start is null) showingTimeline = false;
+            ClearFilters(); RememberView(); feedback = "已保存" + (item.Alarm is { } savedAlarm ? " · " + savedAlarm.Status(item, DateTimeOffset.Now) : " · 自动保存在本机");
+            RefreshViews(true); return;
         }
     }
 
@@ -279,11 +325,15 @@ internal sealed class MainForm : Form
         => CompleteOn(item, selectedDay ?? today);
     private void CompleteOn(PlanItem item, DateOnly day)
     {
-        Attempt(() =>
+        if (Attempt(() =>
         {
             if (item.IsRecurring && day > today) throw new ArgumentException("未来日期的长期计划到当天才可记录完成。");
             store.Save(item.ToggleOn(day));
-        });
+        })) {
+            deleted = null; completionUndo = (item.Id, day, item.IsCompleteOn(day));
+            noticeText.Text = item.IsCompleteOn(day) ? "已恢复计划 · 10 秒内可撤销" : "已划去计划 · 10 秒内可撤销";
+            undo.Visible = true; ShowNotice();
+        }
         RefreshViews();
     }
 
@@ -301,13 +351,19 @@ internal sealed class MainForm : Form
 
     internal void DeletePlan(PlanItem item)
     {
+        if (item.IsRecurring && Application.MessageLoop && !Confirm("删除整个长期计划？", $"将删除这个计划及 {item.CompletionDates.Count} 条完成记录。删除后 10 秒内可撤销。", "删除整个计划", "取消")) return;
         if (!Attempt(() => store.Delete(item.Id))) return;
-        deleted = item; noticeText.Text = $"已删除：{item.Title}"; undo.Visible = true;
+        completionUndo = null; deleted = item; noticeText.Text = $"已删除：{item.Title}"; undo.Visible = true;
         ShowNotice(); RefreshViews();
     }
 
     internal void UndoDelete()
     {
+        if (completionUndo is { } action) {
+            var current = store.Plans.FirstOrDefault(p => p.Id == action.Id);
+            if (current is not null && current.IsCompleteOn(action.Day) != action.WasComplete && !Attempt(() => store.Save(current.ToggleOn(action.Day)))) return;
+            HideNotice(); RefreshViews(); return;
+        }
         if (deleted is null || !Attempt(() => store.Save(deleted with { UpdatedAt = DateTimeOffset.Now }))) return;
         HideNotice(); RefreshViews();
     }
@@ -319,7 +375,13 @@ internal sealed class MainForm : Form
 
     private void HideNotice()
     {
-        undoTimer.Stop(); deleted = null; notice.Visible = false; noticeRow.Height = 0;
+        undoTimer.Stop(); deleted = null; completionUndo = null; notice.Visible = false; noticeRow.Height = 0;
+    }
+
+    private bool Confirm(string heading, string text, string accept, string cancel)
+    {
+        var yes = new TaskDialogButton(accept); var no = new TaskDialogButton(cancel);
+        return TaskDialog.ShowDialog(this, new TaskDialogPage { Caption = "计划表", Heading = heading, Text = text, AllowCancel = true, DefaultButton = no, Buttons = { no, yes } }) == yes;
     }
 
     private void Export()
@@ -382,6 +444,7 @@ internal sealed class MainForm : Form
 
     private void CheckAlarms()
     {
+        var changed = false;
         foreach (var window in alarms.ToArray()) {
             var current = store.Plans.FirstOrDefault(p => p.Id == window.PlanId);
             if (current?.Alarm is null || current.IsCompleteOn(window.Day) || current.GoalReached || current.Alarm.Mode == "after" && current.SeriesFinished(today)) window.Close();
@@ -406,8 +469,10 @@ internal sealed class MainForm : Form
             var window = new AlarmWindow(plan, due); alarms.Add(window);
             window.FormClosed += (_, _) => { alarms.Remove(window); window.Dispose(); };
             window.Show();
+            changed = true;
         }
         foreach (var id in countdowns.Keys.Where(id => !store.Plans.Any(p => p.Id == id && p.Alarm?.Mode == "after")).ToArray()) countdowns.Remove(id);
+        if (changed) RefreshViews();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

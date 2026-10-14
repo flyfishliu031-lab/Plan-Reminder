@@ -77,6 +77,17 @@ final class PlanAlarm {
         : "闹钟 · " + (mode.equals("start") ? "开始时" : "结束时");
   }
 
+  String status(Plan p, Instant now) {
+    Instant next = next(p, now);
+    if (next != null)
+      return "下一次提醒 · "
+          + next.atZone(ZoneId.systemDefault())
+              .format(java.time.format.DateTimeFormatter.ofPattern("MM/dd HH:mm"));
+    return p.completed || p.goalReached()
+        ? "提醒已取消 · 计划已完成"
+        : firedAt != null ? "已响铃 · 暂无待触发提醒" : "暂无待触发提醒";
+  }
+
   JSONObject json() throws JSONException {
     JSONObject o = new JSONObject();
     o.put("mode", mode);

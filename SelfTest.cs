@@ -74,6 +74,16 @@ internal static class SelfTest
         Check(title.Font.Strikeout && title.ForeColor == ColorTranslator.FromHtml(first.Color), "completed title uses same color and strikethrough");
         form.ToggleCompletion(uiStore.Plans.Single());
         Check(!uiStore.Plans.Single().IsCompleted, "completion can be restored");
+        form.ToggleCompletion(uiStore.Plans.Single());
+        uiStore.Save(uiStore.Plans.Single() with { Title = "撤销前修改的内容" });
+        form.UndoDelete();
+        Check(!uiStore.Plans.Single().IsCompleted && uiStore.Plans.Single().Title == "撤销前修改的内容", "completion undo preserves later edits");
+        form.FilterPlans("撤销前", 1);
+        Check(form.PlanList.Controls.OfType<PlanCard>().Count() == 1, "search and pending filter find matching plan");
+        form.FilterPlans("撤销前", 2);
+        Check(!form.PlanList.Controls.OfType<PlanCard>().Any(), "completed filter excludes pending plan");
+        form.ClearFilters();
+        Check(form.PlanList.Controls.OfType<PlanCard>().Count() == 1, "clearing search restores full list");
         form.DeletePlan(uiStore.Plans.Single()); Check(uiStore.Plans.Count == 0, "delete persists immediately");
         form.UndoDelete(); Check(uiStore.Plans.Count == 1, "delete undo restores plan");
         uiStore.Save(crossDay); form.SelectDate(today.AddDays(1));
@@ -226,6 +236,11 @@ internal static class SelfTest
         Check(savedSettings.ExitOnClose, "close-exit preference survives restart");
         settings.Save(false); savedSettings.Load();
         Check(!savedSettings.ExitOnClose, "close-exit preference can be disabled");
+        settings.Save(false, "timetable"); savedSettings.Load();
+        Check(savedSettings.View == "timetable", "preferred view survives restart");
+        settings.Save(true); savedSettings.Load();
+        Check(savedSettings.View == "timetable" && savedSettings.ExitOnClose, "saving close behavior preserves preferred view");
+        settings.Save(false, "plans");
         using (var cancelledSettings = new SettingsForm(settings))
         {
             Descendants(cancelledSettings).OfType<CheckBox>().Single().Checked = true;
@@ -283,6 +298,7 @@ internal static class SelfTest
         dailyAlarm.Validate();
         var morning = new DateTimeOffset(today.ToDateTime(new TimeOnly(8, 0)), TimeZoneInfo.Local.GetUtcOffset(today.ToDateTime(new TimeOnly(8, 0))));
         Check(dailyAlarm.Alarm!.Next(dailyAlarm, morning)?.LocalDateTime == today.ToDateTime(new TimeOnly(23, 0)), "daily alarm uses system local start time");
+        Check(dailyAlarm.Alarm.Status(dailyAlarm, morning).Contains("23:00"), "alarm status identifies next reminder time");
         Check(dailyAlarm.Alarm.Next(dailyAlarm.ToggleOn(today), morning)?.LocalDateTime == today.AddDays(1).ToDateTime(new TimeOnly(23, 0)), "daily completion cancels today but retains next day alarm");
         var crossAlarm = crossDay with { Alarm = new PlanAlarm { Mode = "end" } };
         Check(crossAlarm.Alarm!.Next(crossAlarm, morning)?.LocalDateTime == today.AddDays(1).ToDateTime(new TimeOnly(1, 0)), "end alarm respects cross-day end date");

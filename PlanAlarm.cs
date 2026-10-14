@@ -47,6 +47,10 @@ public sealed record PlanAlarm
     internal DateOnly Occurrence(PlanItem plan, DateTimeOffset due) => DateOnly.FromDateTime(due.LocalDateTime)
         .AddDays(plan.IsRecurring && Mode == "end" ? -plan.EndOffset : 0);
 
+    internal string Status(PlanItem plan, DateTimeOffset now) => Next(plan, now) is { } next ?
+        $"下一次提醒 · {next.ToLocalTime():MM/dd HH:mm}" : plan.IsCompleted || plan.GoalReached ? "提醒已取消 · 计划已完成" :
+        FiredAt is not null ? "已响铃 · 暂无待触发提醒" : "暂无待触发提醒";
+
     private static DateTimeOffset Local(DateTime time)
     {
         var zone = TimeZoneInfo.Local;

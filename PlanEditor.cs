@@ -35,6 +35,11 @@ internal sealed class PlanEditor : Form
     private readonly Panel dateField;
     private string color;
     private int previousUnit;
+    private readonly Label preview = Theme.Label("", Theme.Small, Theme.Muted);
+    private readonly Dictionary<string, (Button Toggle, Control Content)> groups = [];
+    private Panel bodyScroll = null!;
+    private readonly Button setupAlarmTime = Theme.Button("设置计划时间");
+    private readonly Dictionary<Control, Label> fieldErrors = [];
     public PlanItem? Result { get; private set; }
 
     public PlanEditor(PlanItem item, bool isNew)
@@ -57,9 +62,11 @@ internal sealed class PlanEditor : Form
         var header = Stack();
         header.Padding = new Padding(28, 20, 28, 12);
         Add(header, Theme.Label(Text, Theme.EditorHeading), 4);
-        Add(header, Theme.Label(!isNew && item.IsRecurring ? "正在编辑整个长期计划；已有完成记录会保留。" : "把想做的事记下来，时间可以稍后安排。", Theme.Small, Theme.Muted), 0);
+        Add(header, Theme.Label(!isNew && item.IsRecurring ? "正在编辑整个长期计划；已有完成记录会保留。" : "填写内容即可保存，其他设置按需展开。Ctrl+Enter 保存。", Theme.Small, Theme.Muted), 4);
+        Add(header, preview, 0);
 
         var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(28, 0, 28, 0), Margin = Padding.Empty };
+        bodyScroll = scroll;
         var body = Stack();
         scroll.Layout += (_, _) => body.MaximumSize = new Size(Math.Max(1, scroll.ClientSize.Width - scroll.Padding.Horizontal -
             (scroll.VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0)), 0);
@@ -67,11 +74,11 @@ internal sealed class PlanEditor : Form
         title.Text = item.Title; title.AccessibleName = "计划标题（必填）";
         title.PlaceholderText = "想做些什么？";
         Add(content.Layout, Input(title, 72, true), 12);
-        Add(content.Layout, Theme.Label("备注 · 可选", Theme.Small, Theme.Muted), 8);
+        AddFieldError(content.Layout, title);
         notes.Text = item.Notes; notes.AccessibleName = "计划备注";
         notes.PlaceholderText = "补充说明、步骤或需要准备的东西";
-        Add(content.Layout, Input(notes, 60), 0);
         Add(body, content.Panel, 16);
+        AddOptional(body, "备注", Input(notes, 72), !string.IsNullOrEmpty(item.Notes));
 
         var time = Section("时间安排");
         Add(time.Layout, Theme.Label("以下均为可选项，也可以只填写预期时长。", Theme.Small, Theme.Muted), 14);
@@ -79,7 +86,7 @@ internal sealed class PlanEditor : Form
         date.Value = (item.Day ?? DateOnly.FromDateTime(DateTime.Now)).ToDateTime(TimeOnly.MinValue);
         date.AccessibleName = "计划日期";
         Add(time.Layout, hasDate, 8);
-        var dateLayout = Stack(); Add(dateLayout, date, 0); dateField = dateLayout;
+        var dateLayout = Stack(); Add(dateLayout, date, 0); AddFieldError(dateLayout, date); dateField = dateLayout;
         Add(time.Layout, dateField, 12);
         hasSchedule.Checked = item.Start is not null;
         start.Value = DateTime.Today.Add((item.Start ?? new TimeOnly(9, 0)).ToTimeSpan());
@@ -87,6 +94,7 @@ internal sealed class PlanEditor : Form
         endDate.Value = (item.EndDay ?? item.Day ?? DateOnly.FromDateTime(DateTime.Now)).ToDateTime(TimeOnly.MinValue);
         start.AccessibleName = "开始时间"; end.AccessibleName = "结束时间"; endDate.AccessibleName = "结束日期";
         Add(time.Layout, hasSchedule, 8);
+        AddFieldError(time.Layout, hasSchedule);
         scheduleFields = Stack();
         var times = new TableLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         times.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); times.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -97,6 +105,16 @@ internal sealed class PlanEditor : Form
         Add(scheduleFields, times, 12);
         endDateField = Field("结束日期 · 跨天时选择下一天", endDate);
         Add(scheduleFields, endDateField, 0);
+        var shortcuts = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, WrapContents = true, Margin = Padding.Empty };
+        foreach (var minutes in new[] { 30, 60 }) {
+            var quick = Theme.Button(minutes == 30 ? "30 分钟" : "1 小时"); quick.Width = 100; quick.Height = 36; quick.Font = Theme.Small;
+            quick.Click += (_, _) => {
+                var ending = date.Value.Date.Add(start.Value.TimeOfDay).AddMinutes(minutes);
+                if (ending.Date > endDate.MaxDate.Date) { error.Text = "结束日期超出可用范围。"; return; }
+                end.Value = DateTime.Today.Add(ending.TimeOfDay); endDate.Value = ending.Date; RefreshPreview();
+            }; shortcuts.Controls.Add(quick);
+        }
+        Add(scheduleFields, shortcuts, 0);
         Add(time.Layout, scheduleFields, 16);
 
         unit.Items.AddRange(["分钟", "小时"]); unit.SelectedIndex = 0;
@@ -111,9 +129,10 @@ internal sealed class PlanEditor : Form
         duration.Margin = new Padding(0, 0, 10, 0); unit.Margin = Padding.Empty;
         durationRow.Controls.Add(duration, 0, 0); durationRow.Controls.Add(unit, 1, 0);
         Add(durationFields, durationRow, 6);
+        AddFieldError(durationFields, duration);
         Add(durationFields, Theme.Label("记录预计用时，可与时间段分别设置。", Theme.Small, Theme.Muted), 0);
         Add(time.Layout, durationFields, 0);
-        Add(body, time.Panel, 16);
+        AddOptional(body, "时间与时长", time.Panel, item.Start is not null || item.DurationMinutes is not null || !isNew && item.Day is not null);
 
         var repeat = Section("长期计划");
         hasRepeat.Checked = item.IsRecurring;
@@ -129,7 +148,7 @@ internal sealed class PlanEditor : Form
         Add(repeatFields, Field("目标数值", repeatValue), 10);
         Add(repeatFields, repeatHint, 0);
         Add(repeat.Layout, repeatFields, 0);
-        Add(body, repeat.Panel, 16);
+        AddOptional(body, "长期计划", repeat.Panel, item.IsRecurring);
 
         var alarm = Section("闹钟提醒");
         hasAlarm.Checked = item.Alarm is not null;
@@ -139,12 +158,14 @@ internal sealed class PlanEditor : Form
         alarmMode.SelectedIndex = item.Alarm?.Mode == "start" ? 1 : item.Alarm?.Mode == "end" ? 2 : 0;
         alarmMinutes.Value = item.Alarm?.AfterMinutes ?? 10;
         Add(alarmFields, Field("提醒方式", alarmMode), 12);
+        setupAlarmTime.Click += (_, _) => { hasDate.Checked = true; hasSchedule.Checked = true; OpenGroup("时间与时长"); bodyScroll.ScrollControlIntoView(start); start.Focus(); };
+        Add(alarmFields, setupAlarmTime, 8);
         alarmAfterField = Field("多少分钟后响起", alarmMinutes);
         Add(alarmFields, alarmAfterField, 8);
         Add(alarmFields, restartAlarm, 8);
         Add(alarmFields, alarmHint, 0);
         Add(alarm.Layout, alarmFields, 0);
-        Add(body, alarm.Panel, 16);
+        AddOptional(body, "闹钟提醒", alarm.Panel, item.Alarm is not null);
 
         var colorSection = Section("计划颜色");
         Add(colorSection.Layout, Theme.Label("用颜色区分计划，划去后仍保留原色。", Theme.Small, Theme.Muted), 12);
@@ -165,16 +186,16 @@ internal sealed class PlanEditor : Form
             { color = $"#{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}"; RefreshColor(); }
         };
         colors.Controls.Add(customColor); Add(colorSection.Layout, colors, 0);
-        Add(body, colorSection.Panel, 0);
+        AddOptional(body, "计划颜色", colorSection.Panel, false);
         scroll.Controls.Add(body);
 
         var footer = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, RowCount = 1,
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 2,
             Padding = new Padding(28, 12, 28, 16), BackColor = Color.White, Margin = Padding.Empty
         };
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        footer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.RowStyles.Add(new RowStyle(SizeType.AutoSize)); footer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         error.Dock = DockStyle.Fill; error.TextAlign = ContentAlignment.MiddleLeft;
         var actions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = Padding.Empty };
         var cancel = Theme.Button("取消"); cancel.Width = 88; cancel.DialogResult = DialogResult.Cancel;
@@ -182,14 +203,16 @@ internal sealed class PlanEditor : Form
         cancel.Margin = new Padding(0, 0, 12, 0); save.Margin = Padding.Empty;
         save.Click += (_, _) => SavePlan();
         actions.Controls.AddRange([cancel, save]);
-        footer.Controls.Add(error, 0, 0); footer.Controls.Add(actions, 1, 0);
+        error.Visible = false;
+        footer.SizeChanged += (_, _) => error.MaximumSize = new Size(Math.Max(1, footer.Width - footer.Padding.Horizontal), 0);
+        actions.Anchor = AnchorStyles.Right; footer.Controls.Add(error, 0, 0); footer.Controls.Add(actions, 0, 1);
         AcceptButton = save; CancelButton = cancel;
         root.Controls.Add(header, 0, 0); root.Controls.Add(scroll, 0, 1); root.Controls.Add(footer, 0, 2); Controls.Add(root);
         hasDate.CheckedChanged += (_, _) => { if (!hasDate.Checked) hasSchedule.Checked = false; RefreshEnabled(); };
-        hasSchedule.CheckedChanged += (_, _) => RefreshEnabled();
-        hasDuration.CheckedChanged += (_, _) => RefreshEnabled();
-        hasRepeat.CheckedChanged += (_, _) => { if (hasRepeat.Checked) hasDate.Checked = true; RefreshEnabled(); };
-        hasAlarm.CheckedChanged += (_, _) => RefreshEnabled();
+        hasSchedule.CheckedChanged += (_, _) => { if (hasSchedule.Checked) OpenGroup("时间与时长"); RefreshEnabled(); };
+        hasDuration.CheckedChanged += (_, _) => { if (hasDuration.Checked) OpenGroup("时间与时长"); RefreshEnabled(); };
+        hasRepeat.CheckedChanged += (_, _) => { if (hasRepeat.Checked) { hasDate.Checked = true; OpenGroup("长期计划"); } RefreshEnabled(); };
+        hasAlarm.CheckedChanged += (_, _) => { if (hasAlarm.Checked) OpenGroup("闹钟提醒"); RefreshEnabled(); };
         alarmMode.SelectedIndexChanged += (_, _) => RefreshEnabled();
         repeatMode.SelectedIndexChanged += (_, _) =>
         { repeatValue.Maximum = repeatMode.SelectedIndex == 0 ? 3650 : 10000; RefreshRepeatHint(); };
@@ -211,8 +234,38 @@ internal sealed class PlanEditor : Form
             duration.Value = Math.Clamp(previousUnit == 1 ? Math.Round(minutes / 60, 2) : Math.Round(minutes), duration.Minimum, duration.Maximum);
         };
         RefreshColor(); RefreshEnabled(); ResumeLayout(true);
+        foreach (var picker in new[] { start, end, endDate }) picker.ValueChanged += (_, _) => RefreshPreview();
+        duration.ValueChanged += (_, _) => RefreshPreview();
+        alarmMinutes.ValueChanged += (_, _) => RefreshPreview();
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (e.Control && e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; SavePlan(); } };
         Load += (_, _) => Theme.FitWindow(this);
         Shown += (_, _) => { title.Focus(); title.SelectionStart = title.TextLength; };
+    }
+
+    private void AddOptional(TableLayoutPanel parent, string name, Control content, bool expanded)
+    {
+        var wrapper = Stack(); var toggle = Theme.Button(""); toggle.TextAlign = ContentAlignment.MiddleLeft; toggle.Height = 40;
+        content.Visible = expanded; toggle.Tag = expanded;
+        void Caption() => toggle.Text = $"{((bool)toggle.Tag ? "收起" : "展开")} · {name}";
+        toggle.Click += (_, _) => { var open = !(bool)toggle.Tag; toggle.Tag = open; content.Visible = open; Caption(); };
+        toggle.AccessibleName = name + "，展开或收起设置";
+        Add(wrapper, toggle, 6); Add(wrapper, content, 0); Add(parent, wrapper, 10);
+        groups[name] = (toggle, content); Caption();
+    }
+    internal void OpenGroup(string name)
+    {
+        if (!groups.TryGetValue(name, out var group)) return;
+        group.Content.Visible = true; group.Toggle.Tag = true; group.Toggle.Text = "收起 · " + name;
+    }
+    private void RefreshPreview()
+    {
+        var parts = new List<string> { hasDate.Checked ? $"{date.Value:MM月dd日}" : "待安排" };
+        if (hasDate.Checked && hasSchedule.Checked) parts.Add($"{start.Value:HH:mm}—{(endDate.Value.Date == date.Value.Date ? "" : endDate.Value.Date == date.Value.Date.AddDays(1) ? "次日 " : $"{endDate.Value:MM/dd} ")}{end.Value:HH:mm}");
+        if (hasDuration.Checked) parts.Add($"预计 {duration.Value:0.##}{(unit.SelectedIndex == 1 ? "小时" : "分钟")}");
+        if (hasRepeat.Checked) parts.Add(repeatMode.SelectedIndex == 0 ? $"每天 · 持续 {repeatValue.Value:0} 天" : $"每天 · 完成 {repeatValue.Value:0} 次");
+        if (hasAlarm.Checked) parts.Add(alarmMode.SelectedIndex == 0 ? $"{alarmMinutes.Value:0} 分钟后提醒" : alarmMode.SelectedIndex == 1 ? "开始提醒" : "结束提醒");
+        preview.Text = string.Join(" · ", parts);
     }
 
     private static TableLayoutPanel Stack()
@@ -297,9 +350,14 @@ internal sealed class PlanEditor : Form
         return panel;
     }
 
-    private static TableLayoutPanel Field(string caption, Control input)
+    private void AddFieldError(TableLayoutPanel parent, Control input)
     {
-        var field = Stack(); Add(field, Theme.Label(caption, Theme.Small, Theme.Muted), 8); Add(field, input, 0); return field;
+        var label = Theme.Label("", Theme.Small, Theme.Danger); label.Visible = false; label.AccessibleName = input.AccessibleName + "填写提示";
+        Add(parent, label, 6); fieldErrors[input] = label;
+    }
+    private TableLayoutPanel Field(string caption, Control input)
+    {
+        var field = Stack(); Add(field, Theme.Label(caption, Theme.Small, Theme.Muted), 8); Add(field, input, 0); AddFieldError(field, input); return field;
     }
 
     private static DateTimePicker TimePicker() => new()
@@ -317,12 +375,14 @@ internal sealed class PlanEditor : Form
         repeatFields.Visible = hasRepeat.Checked;
         alarmFields.Visible = hasAlarm.Checked;
         alarmAfterField.Visible = alarmMode.SelectedIndex == 0;
+        setupAlarmTime.Visible = alarmMode.SelectedIndex != 0 && !hasSchedule.Checked;
         restartAlarm.Visible = alarmMode.SelectedIndex == 0 && original.Alarm?.Mode == "after";
         alarmHint.Text = alarmMode.SelectedIndex == 0 ?
             "保存后开始倒计时，无需时间段；长期计划的倒计时只响一次。编辑时保留原闹钟时间，勾选上方选项可重新计时。" :
             "需要勾选“设置时间段”；长期计划每天提醒，当天完成后取消当天闹钟。";
         alarmHint.Text += " 关闭到托盘后仍会提醒；退出程序或电脑关机时无法响铃。";
         RefreshRepeatHint();
+        RefreshPreview();
     }
 
     private void RefreshRepeatHint()
@@ -337,6 +397,7 @@ internal sealed class PlanEditor : Form
         else repeatHint.Text = $"从安排日期开始，每天重复，累计完成 {repeatValue.Value:0} 次后结束。每天最多记录一次；未来日期到当天才可勾选。";
         repeatHint.Text += " 时间段可跨到次日，最长 24 小时；完成记录归属开始日期。编辑会修改整个长期计划。";
         if (original.CompletionDates.Count > 0) repeatHint.Text += " 修改目标会保留已有记录；开始和结束日期须包含已完成的日期。";
+        RefreshPreview();
     }
 
     private void RefreshColor()
@@ -351,6 +412,8 @@ internal sealed class PlanEditor : Form
 
     internal void SavePlan()
     {
+        error.Text = ""; error.Visible = false;
+        foreach (var label in fieldErrors.Values) { label.Text = ""; label.Visible = false; }
         try
         {
             var scheduled = hasDate.Checked && hasSchedule.Checked;
@@ -381,6 +444,20 @@ internal sealed class PlanEditor : Form
             result.Validate(); Result = result;
             DialogResult = DialogResult.OK; Close();
         }
-        catch (ArgumentException ex) { error.Text = ex.Message; title.Focus(); }
+        catch (ArgumentException ex) {
+            error.Text = ex.Message; error.Visible = true;
+            Control target = title;
+            if (string.IsNullOrWhiteSpace(title.Text)) target = title;
+            else if (ex.Message.Contains("闹钟")) {
+                OpenGroup("闹钟提醒"); target = alarmMinutes;
+                if (alarmMode.SelectedIndex != 0 && !hasSchedule.Checked) { OpenGroup("时间与时长"); target = hasSchedule; }
+            }
+            else if (ex.Message.Contains("记录")) { OpenGroup("时间与时长"); target = date; }
+            else if (ex.Message.Contains("长期") || ex.Message.Contains("持续") || ex.Message.Contains("次数")) { OpenGroup("长期计划"); target = repeatValue; }
+            else if (ex.Message.Contains("预期")) { OpenGroup("时间与时长"); target = duration; }
+            else if (ex.Message.Contains("时间") || ex.Message.Contains("日期") || ex.Message.Contains("时长")) { OpenGroup("时间与时长"); target = hasSchedule.Checked ? endDate : hasDate; }
+            if (fieldErrors.TryGetValue(target, out var inline)) { inline.Text = ex.Message; inline.Visible = true; }
+            bodyScroll.ScrollControlIntoView(target); target.Focus();
+        }
     }
 }

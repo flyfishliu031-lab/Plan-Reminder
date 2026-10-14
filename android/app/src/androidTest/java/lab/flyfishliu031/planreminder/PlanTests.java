@@ -16,10 +16,168 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.*;
 import java.time.*;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.json.*;
 import org.junit.*;
 
 public class PlanTests {
+  @Test
+  public void quickAddFiltersUndoAndSavingRotation() throws Exception {
+    String[] id = new String[1];
+    try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            try {
+              for (Plan p : a.store.all()) a.store.delete(p.id);
+              a.selected = LocalDate.now();
+              a.switchMode(0);
+              new EditorForm(a, null, null);
+              View decor = a.editor.dialog.getWindow().getDecorView();
+              assertNotNull(findButton(decor, "展开 · 时间与时长"));
+              assertNotNull(findButton(decor, "展开 · 长期计划"));
+              assertFalse(findCheckBox(decor, "添加闹钟 · 可选").isShown());
+              inputs(decor).stream()
+                  .filter(v -> "计划内容（必填）".contentEquals(v.getContentDescription()))
+                  .findFirst()
+                  .get()
+                  .setText("只写内容的快速计划");
+              id[0] = a.editor.snapshot().getString("draftId");
+            } catch (Exception e) {
+              throw new AssertionError(e);
+            }
+          });
+      SystemClock.sleep(300);
+      scenario.onActivity(this::checkSaveVisible);
+      capture("android-editor-quick.png");
+      CountDownLatch started = new CountDownLatch(1), release = new CountDownLatch(1);
+      MainActivity.io.execute(
+          () -> {
+            started.countDown();
+            try {
+              release.await(8, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+            }
+          });
+      assertTrue(started.await(5, TimeUnit.SECONDS));
+      try {
+        scenario.onActivity(a -> a.editor.save());
+        scenario.recreate();
+      } finally {
+        release.countDown();
+      }
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            assertNull("Saving during rotation must not reopen the saved draft", a.editor);
+            assertEquals(1, a.store.all().size());
+            Plan saved = a.store.all().get(0);
+            assertEquals(id[0], saved.id);
+            assertNull(saved.start);
+            assertNull(saved.alarm);
+            assertNull(saved.durationMinutes);
+            a.completePlan(saved, a.selected);
+          });
+      waitReady(scenario);
+      scenario.recreate();
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            try {
+              Plan edited = a.store.all().get(0);
+              assertTrue(edited.completed);
+              edited.notes = "撤销完成时也应保留后来编辑的备注";
+              a.store.save(edited);
+              assertNotNull(findButton(a.footer, "撤销"));
+              findButton(a.footer, "撤销").performClick();
+            } catch (Exception e) {
+              throw new AssertionError(e);
+            }
+          });
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            try {
+              Plan saved = a.store.all().get(0);
+              assertFalse(saved.completed);
+              assertTrue(saved.notes.contains("后来编辑"));
+              Plan other = new Plan();
+              other.title = "已完成的其他计划";
+              other.day = a.selected;
+              other.completed = true;
+              a.store.save(other);
+              Plan undated = new Plan();
+              undated.title = "暂不安排日期的计划";
+              a.store.save(undated);
+              a.render();
+              android.app.AlertDialog filters = a.showFilters();
+              View decor = filters.getWindow().getDecorView();
+              inputs(decor).get(0).setText("后来编辑");
+              ((Spinner) described(decor, "完成状态筛选")).setSelection(1);
+              filters.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+              assertEquals(1, a.list.getChildCount());
+              assertTrue(a.heading.getText().toString().startsWith("1 项匹配"));
+            } catch (Exception e) {
+              throw new AssertionError(e);
+            }
+          });
+      SystemClock.sleep(300);
+      scenario.onActivity(
+          a -> {
+            checkButtons(a.navigation);
+            checkButtons(a.footer);
+          });
+      capture("android-filtered.png");
+      scenario.recreate();
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            assertEquals("后来编辑", a.query);
+            assertEquals(1, a.stateFilter);
+            assertEquals(1, a.list.getChildCount());
+            findButton(a.list, "删除").performClick();
+          });
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            assertFalse(a.store.all().stream().anyMatch(p -> p.id.equals(id[0])));
+            findButton(a.footer, "撤销").performClick();
+          });
+      waitReady(scenario);
+      scenario.onActivity(
+          a -> {
+            assertTrue(a.store.all().stream().anyMatch(p -> p.id.equals(id[0])));
+            android.app.AlertDialog filters = a.showFilters();
+            View decor = filters.getWindow().getDecorView();
+            inputs(decor).get(0).setText("");
+            ((Spinner) described(decor, "完成状态筛选")).setSelection(0);
+            ((Spinner) described(decor, "计划范围")).setSelection(1);
+            filters.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+            assertEquals(1, a.mode);
+            assertEquals(1, a.list.getChildCount());
+            Plan dated = a.store.all().stream().filter(p -> p.id.equals(id[0])).findFirst().get();
+            a.revealSaved(dated);
+            a.render();
+            assertEquals("A dated plan saved from the undated view must be revealed", 0, a.mode);
+            a.switchMode(3);
+            assertEquals(3, a.getSharedPreferences("ui", Context.MODE_PRIVATE).getInt("view", -1));
+          });
+    }
+  }
+
+  private View described(View view, String description) {
+    if (view.getContentDescription() != null
+        && description.contentEquals(view.getContentDescription())) return view;
+    if (view instanceof ViewGroup)
+      for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+        View found = described(((ViewGroup) view).getChildAt(i), description);
+        if (found != null) return found;
+      }
+    return null;
+  }
+
   @Test
   public void timetableOvernightAndSelection() throws Exception {
     Instrumentation inst = InstrumentationRegistry.getInstrumentation();
@@ -119,14 +277,16 @@ public class PlanTests {
                 a.timeline.getGlobalVisibleRect(visible));
             assertTrue(
                 "Opening timetable must leave usable timeline space", visible.height() >= a.dp(80));
-            assertNotNull(findButton(a.footer, "日期与视图"));
+            assertNotNull(findButton(a.navigation, "时间表"));
+            Rect headerBounds = new Rect();
+            assertTrue(a.dateButton.getGlobalVisibleRect(headerBounds));
           });
       capture("android-timetable.png");
       scenario.onActivity(
           a -> {
             assertNotNull(a.timeline);
             assertEquals(4, a.timeline.segments.size());
-            a.mainScroll.scrollTo(0, a.list.getTop() + a.timeline.getTop() + a.dp(8 * 88));
+            a.mainScroll.scrollTo(0, a.list.getTop() + a.timeline.getTop() + a.dp(9 * 88));
           });
       SystemClock.sleep(350);
       capture("android-timetable-day.png");

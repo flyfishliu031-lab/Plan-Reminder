@@ -37,11 +37,17 @@ public final class MainActivity extends Activity {
   ScrollView mainScroll;
   private LocalDate timelineDayShown;
   boolean ready, busy;
-  LinearLayout root, body, list, footer;
+  LinearLayout root, body, list, footer, chrome, navigation;
   TextView clock, heading;
   Button dateButton;
   private Plan deleted;
   private long undoUntil;
+  private String undoCompletionId, undoMessage = "计划已删除";
+  private LocalDate undoCompletionDate;
+  private boolean undoWasComplete;
+  String query = "";
+  int stateFilter;
+  private final List<TextView> alarmLabels = new ArrayList<>();
   EditorForm editor;
   private Bundle draft;
   private final Runnable tick =
@@ -53,6 +59,15 @@ public final class MainActivity extends Activity {
                     .format(DateTimeFormatter.ofPattern("MM月dd日 EEEE · HH:mm", Locale.CHINA)));
           if (ready && editor == null && !LocalDate.now().equals(lastToday)) render();
           if (timeline != null) timeline.invalidate();
+          if (ready)
+            for (TextView label : alarmLabels) {
+              Plan current =
+                  store.all().stream()
+                      .filter(p -> p.id.equals(label.getTag()))
+                      .findFirst()
+                      .orElse(null);
+              if (current != null && current.alarm != null) label.setText(alarmText(current));
+            }
           lastToday = LocalDate.now();
           handler.postDelayed(this, 30000);
         }
@@ -62,26 +77,47 @@ public final class MainActivity extends Activity {
   @Override
   public void onCreate(Bundle state) {
     super.onCreate(state);
+    mode = getSharedPreferences("ui", MODE_PRIVATE).getInt("view", 0);
     if (state != null) {
       selected = LocalDate.parse(state.getString("selected", LocalDate.now().toString()));
       mode = state.getInt("mode");
       draft = state.getBundle("draft");
+      query = state.getString("query", "");
+      stateFilter = state.getInt("filter");
+      undoUntil = state.getLong("undoUntil");
+      undoMessage = state.getString("undoMessage", "计划已删除");
+      undoCompletionId = state.getString("undoCompletionId");
+      undoWasComplete = state.getBoolean("undoWasComplete");
+      if (state.containsKey("undoCompletionDate"))
+        undoCompletionDate = LocalDate.parse(state.getString("undoCompletionDate"));
+      if (state.containsKey("deleted"))
+        try {
+          deleted = Plan.from(new org.json.JSONObject(state.getString("deleted")));
+        } catch (Exception ignored) {
+          deleted = null;
+        }
     }
     store = appStore(this);
     root = column();
     root.setBackgroundColor(CANVAS);
     inset(root, getWindow());
     setContentView(root);
+    chrome = column();
+    chrome.setPadding(dp(16), dp(8), dp(16), dp(8));
+    root.addView(chrome);
     ScrollView scroll = new ScrollView(this);
     mainScroll = scroll;
     scroll.setFillViewport(true);
     body = column();
-    body.setPadding(dp(20), dp(20), dp(20), dp(16));
+    body.setPadding(dp(16), dp(8), dp(16), dp(12));
     scroll.addView(body);
     root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     footer = column();
     footer.setPadding(dp(20), dp(12), dp(20), dp(12));
     root.addView(footer);
+    navigation = row();
+    navigation.setPadding(dp(12), dp(4), dp(12), dp(8));
+    root.addView(navigation);
     body.addView(text("正在读取计划…", 18, INK));
     io.execute(
         () -> {
@@ -93,6 +129,7 @@ public final class MainActivity extends Activity {
                   if (isDestroyed() || isFinishing()) return;
                   ready = true;
                   render();
+                  if (undoUntil > SystemClock.elapsedRealtime()) scheduleUndoExpiration();
                   if (draft != null) {
                     Bundle saved = draft;
                     draft = null;
@@ -136,6 +173,7 @@ public final class MainActivity extends Activity {
     handler.post(tick);
     if (ready) {
       render();
+      if (editor != null) editor.refreshPermissions();
       io.execute(() -> AlarmScheduler.sync(this, store));
     }
   }
@@ -157,6 +195,20 @@ public final class MainActivity extends Activity {
   protected void onSaveInstanceState(Bundle state) {
     state.putString("selected", selected.toString());
     state.putInt("mode", mode);
+    state.putString("query", query);
+    state.putInt("filter", stateFilter);
+    state.putLong("undoUntil", undoUntil);
+    state.putString("undoMessage", undoMessage);
+    state.putString("undoCompletionId", undoCompletionId);
+    state.putBoolean("undoWasComplete", undoWasComplete);
+    if (undoCompletionDate != null)
+      state.putString("undoCompletionDate", undoCompletionDate.toString());
+    if (deleted != null)
+      try {
+        state.putString("deleted", deleted.json().toString());
+      } catch (Exception e) {
+        throw new IllegalStateException(e);
+      }
     if (editor != null) state.putBundle("draft", editor.snapshot());
     super.onSaveInstanceState(state);
   }
@@ -166,33 +218,27 @@ public final class MainActivity extends Activity {
     body.removeAllViews();
     timeline = null;
     footer.removeAllViews();
-    LinearLayout top = row();
-    TextView brand = text("计划表", 30, INK);
-    brand.setTypeface(null, Typeface.BOLD);
-    top.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
-    Button settings = button("设置", false);
-    settings.setOnClickListener(v -> settings());
-    top.addView(settings);
-    body.addView(top);
-    if (store.all().stream()
-            .anyMatch(p -> p.alarm != null && !p.completed && !p.finished(LocalDate.now()))
-        && (!AlarmScheduler.exactAllowed(this) || !AlarmScheduler.notificationsAllowed(this))) {
-      Button warning = button("闹钟尚未启用 · 点此允许闹钟和通知权限", false);
-      warning.setTextColor(DANGER);
-      warning.setOnClickListener(v -> AlarmScheduler.permissions(this));
-      add(body, warning, 12, 4);
-    }
+    chrome.removeAllViews();
+    navigation.removeAllViews();
+    alarmLabels.clear();
     clock =
         text(
             ZonedDateTime.now()
                 .format(DateTimeFormatter.ofPattern("MM月dd日 EEEE · HH:mm", Locale.CHINA)),
             14,
             MUTED);
-    add(body, clock, 4, 16);
+    if (getResources().getConfiguration().screenHeightDp > 500
+        && getResources().getConfiguration().fontScale < 1.5f) add(chrome, clock, 0, 4);
     LinearLayout dateRow = row();
     dateButton =
-        button(selected.format(DateTimeFormatter.ofPattern("yyyy年M月d日 EEEE", Locale.CHINA)), false);
-    dateButton.setContentDescription("选择日历日期：" + dateButton.getText());
+        button(
+            selected.format(
+                DateTimeFormatter.ofPattern(
+                    selected.getYear() == LocalDate.now().getYear() ? "M月d日 EEE" : "yyyy/M/d",
+                    Locale.CHINA)),
+            false);
+    dateButton.setContentDescription("选择日历日期：" + selected);
+    dateButton.setEnabled(!busy);
     dateButton.setOnClickListener(
         v ->
             pickDate(
@@ -200,38 +246,41 @@ public final class MainActivity extends Activity {
                 date -> {
                   selected = date;
                   if (mode != 3) mode = 0;
+                  rememberView();
                   render();
                 }));
     dateRow.addView(dateButton, new LinearLayout.LayoutParams(0, -2, 1));
     Button today = button("今天", false);
+    today.setEnabled(!busy);
     today.setOnClickListener(
         v -> {
           selected = LocalDate.now();
           if (mode != 3) mode = 0;
+          rememberView();
           render();
         });
     dateRow.addView(today);
-    add(body, dateRow, 0, 12);
-    LinearLayout tabs = row();
-    String[] labels = {"当天计划", "时间表", "待安排", "长期计划"};
-    int[] modes = {0, 3, 1, 2};
-    for (int i = 0; i < 4; i++) {
-      if (i == 2) {
-        add(body, tabs, 0, 8);
-        tabs = row();
-      }
-      final int index = modes[i];
-      Button b = button(labels[i], mode == index);
-      b.setOnClickListener(
-          v -> {
-            mode = index;
-            render();
-          });
-      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
-      if (i % 2 == 0) lp.setMarginEnd(dp(8));
-      tabs.addView(b, lp);
+    Button filter =
+        button(
+            mode == 3 ? "清单" : query.isEmpty() && stateFilter == 0 && mode != 1 ? "筛选" : "筛选·",
+            false);
+    filter.setContentDescription(mode == 3 ? "查看当天计划清单，短计划也可在清单中操作" : "搜索、完成状态和待安排筛选");
+    filter.setEnabled(!busy);
+    filter.setOnClickListener(
+        v -> {
+          if (mode == 3) switchMode(0);
+          else showFilters();
+        });
+    dateRow.addView(filter);
+    chrome.addView(dateRow);
+    if (store.all().stream()
+            .anyMatch(p -> p.alarm != null && p.alarm.next(p, Instant.now()) != null)
+        && (!AlarmScheduler.exactAllowed(this) || !AlarmScheduler.notificationsAllowed(this))) {
+      Button warning = button("闹钟待开启 · 点此允许提醒", false);
+      warning.setTextColor(DANGER);
+      warning.setOnClickListener(v -> AlarmScheduler.permissions(this));
+      add(chrome, warning, 6, 0);
     }
-    add(body, tabs, 0, 24);
     List<Plan> plans = store.all();
     plans.removeIf(
         p ->
@@ -264,29 +313,36 @@ public final class MainActivity extends Activity {
       add(empty, text(mode == 2 ? "建立每天重复的计划，记录每一天的进步。" : "添加一件想做的事，也可以先不安排时间。", 16, MUTED), 12, 0);
       list.addView(empty);
     }
-    if (mode != 3)
+    if (mode != 3) {
+      int shown = 0;
       for (Plan p : plans) {
-        if (mode == 0 && p.start != null)
-          for (DaySegment s : p.segments(selected))
-            add(list, card(p, s.occurrence, () -> {}), 0, 12);
-        else add(list, card(p), 0, 12);
+        if (!matchesQuery(p)) continue;
+        if (mode == 0 && p.start != null) {
+          for (DaySegment segment : p.segments(selected))
+            if (matchesState(p, segment.occurrence)) {
+              add(list, card(p, segment.occurrence, () -> {}), 0, 12);
+              shown++;
+            }
+        } else if (matchesState(p, mode == 2 ? LocalDate.now() : selected)) {
+          add(list, card(p), 0, 12);
+          shown++;
+        }
       }
-    if (deleted != null && SystemClock.elapsedRealtime() < undoUntil) {
+      if (!query.isEmpty() || stateFilter != 0) {
+        heading.setText(shown + " 项匹配 · " + (mode == 1 ? "待安排" : "当前视图"));
+        if (shown == 0 && !plans.isEmpty())
+          add(list, text("没有匹配的计划，可在上方筛选中清除条件。", 16, MUTED), 8, 8);
+      }
+    }
+    if ((deleted != null || undoCompletionId != null)
+        && SystemClock.elapsedRealtime() < undoUntil) {
       LinearLayout undo = row();
-      TextView info = text("计划已删除", 14, MUTED);
+      TextView info = text(undoMessage, 14, MUTED);
       undo.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
-      Button b = button("撤销", false);
-      Plan restore = deleted;
-      b.setEnabled(!busy);
-      b.setOnClickListener(
-          v -> {
-            if (SystemClock.elapsedRealtime() >= undoUntil) {
-              deleted = null;
-              render();
-              toast("撤销时间已过，可从先前备份恢复。");
-            } else perform(() -> store.save(restore), () -> deleted = null);
-          });
-      undo.addView(b);
+      Button restore = button("撤销", false);
+      restore.setEnabled(!busy);
+      restore.setOnClickListener(v -> undoLastAction());
+      undo.addView(restore);
       footer.addView(undo);
     }
     Button add = button("＋ 添加计划", true);
@@ -296,43 +352,212 @@ public final class MainActivity extends Activity {
           if (mode == 3) addTimelinePlan(540, 600);
           else new EditorForm(this, null, null);
         });
-    if (mode == 3) {
-      LinearLayout actions = row();
-      Button navigation = button("日期与视图", false);
-      navigation.setOnClickListener(v -> mainScroll.smoothScrollTo(0, 0));
-      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
-      lp.setMarginEnd(dp(8));
-      actions.addView(navigation, lp);
-      actions.addView(add, new LinearLayout.LayoutParams(0, -2, 2));
-      footer.addView(actions);
-      if (!selected.equals(timelineDayShown)) {
-        timelineDayShown = selected;
-        int minute =
-            selected.equals(LocalDate.now())
-                ? Math.max(0, LocalTime.now().getHour() * 60 - 60)
-                : 480;
-        DailyTimelineView view = timeline;
-        mainScroll.post(
-            () -> {
-              if (timeline == view && editor == null)
-                mainScroll.scrollTo(
-                    0,
-                    body.getTop()
-                        + list.getTop()
-                        + view.getTop()
-                        + (int) (minute * view.hour / 60));
-            });
-      }
-    } else {
-      timelineDayShown = null;
-      footer.addView(add, new LinearLayout.LayoutParams(-1, -2));
+    footer.addView(add, new LinearLayout.LayoutParams(-1, -2));
+    String[] navLabels = {"计划", "时间表", "长期", "设置"};
+    int[] navModes = {0, 3, 2, -1};
+    for (int i = 0; i < navLabels.length; i++) {
+      final int target = navModes[i];
+      Button item = button(navLabels[i], target == mode || target == 0 && mode == 1);
+      item.setEnabled(!busy);
+      item.setPadding(dp(4), dp(6), dp(4), dp(6));
+      item.setOnClickListener(
+          v -> {
+            if (target == -1) settings();
+            else switchMode(target);
+          });
+      navigation.addView(item, new LinearLayout.LayoutParams(0, -2, 1));
     }
+    if (mode == 3 && !selected.equals(timelineDayShown)) {
+      timelineDayShown = selected;
+      int minute =
+          selected.equals(LocalDate.now()) ? Math.max(0, LocalTime.now().getHour() * 60 - 60) : 480;
+      DailyTimelineView view = timeline;
+      mainScroll.post(
+          () -> {
+            if (timeline == view && editor == null)
+              mainScroll.scrollTo(
+                  0, list.getTop() + view.getTop() + (int) (minute * view.hour / 60));
+          });
+    } else if (mode != 3) timelineDayShown = null;
     root.setEnabled(!busy);
   }
 
   private View card(Plan p) {
     LocalDate date = mode == 2 ? LocalDate.now() : selected;
     return card(p, date, () -> {});
+  }
+
+  private void rememberView() {
+    getSharedPreferences("ui", MODE_PRIVATE).edit().putInt("view", mode).apply();
+  }
+
+  void switchMode(int target) {
+    if (busy) return;
+    mode = target;
+    query = "";
+    stateFilter = 0;
+    rememberView();
+    mainScroll.scrollTo(0, 0);
+    render();
+  }
+
+  boolean matchesQuery(Plan p) {
+    String text = query.trim().toLowerCase(Locale.ROOT);
+    return text.isEmpty()
+        || p.title.toLowerCase(Locale.ROOT).contains(text)
+        || p.notes.toLowerCase(Locale.ROOT).contains(text);
+  }
+
+  private boolean matchesState(Plan p, LocalDate date) {
+    boolean done = mode == 2 ? p.finished(LocalDate.now()) : p.checked(date);
+    return stateFilter == 0 || stateFilter == 1 && !done || stateFilter == 2 && done;
+  }
+
+  AlertDialog showFilters() {
+    LinearLayout fields = column();
+    fields.setPadding(dp(20), dp(8), dp(20), dp(8));
+    EditText search = new EditText(this);
+    search.setText(query);
+    search.setHint("搜索计划或备注");
+    search.setContentDescription("搜索计划或备注");
+    search.setSingleLine(true);
+    search.setMinimumHeight(dp(48));
+    fields.addView(search);
+    Spinner scope = new Spinner(this);
+    scope.setAdapter(
+        new ArrayAdapter<>(
+            this, android.R.layout.simple_spinner_dropdown_item, new String[] {"当天计划", "待安排"}));
+    scope.setSelection(mode == 1 ? 1 : 0);
+    scope.setMinimumHeight(dp(48));
+    scope.setContentDescription("计划范围");
+    if (mode == 0 || mode == 1) add(fields, scope, 12, 0);
+    Spinner state = new Spinner(this);
+    state.setAdapter(
+        new ArrayAdapter<>(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            mode == 2 ? new String[] {"全部", "进行中", "已结束"} : new String[] {"全部", "未完成", "已完成"}));
+    state.setSelection(stateFilter);
+    state.setMinimumHeight(dp(48));
+    state.setContentDescription("完成状态筛选");
+    add(fields, state, 12, 0);
+    ScrollView scroll = new ScrollView(this);
+    scroll.addView(fields);
+    return new AlertDialog.Builder(this)
+        .setTitle("搜索与筛选")
+        .setView(scroll)
+        .setNegativeButton("取消", null)
+        .setNeutralButton(
+            "清除",
+            (d, w) -> {
+              query = "";
+              stateFilter = 0;
+              render();
+            })
+        .setPositiveButton(
+            "应用",
+            (d, w) -> {
+              query = search.getText().toString().trim();
+              stateFilter = state.getSelectedItemPosition();
+              if (mode == 0 || mode == 1) mode = scope.getSelectedItemPosition();
+              rememberView();
+              mainScroll.scrollTo(0, 0);
+              render();
+            })
+        .show();
+  }
+
+  void revealSaved(Plan p) {
+    if (p.day == null) mode = 1;
+    else if (!(mode == 2 && p.recurring()) && !p.appears(selected)) {
+      selected = p.day;
+      if (mode != 3) mode = 0;
+    }
+    if (p.day != null && mode == 1) mode = 0;
+    if (mode == 3 && p.start == null || mode == 2 && !p.recurring()) mode = 0;
+    query = "";
+    stateFilter = 0;
+    rememberView();
+  }
+
+  private String alarmText(Plan p) {
+    return p.alarm.next(p, Instant.now()) != null
+            && (!AlarmScheduler.exactAllowed(this) || !AlarmScheduler.notificationsAllowed(this))
+        ? "闹钟待开启 · 在设置中允许提醒"
+        : p.alarm.status(p, Instant.now());
+  }
+
+  private void startUndo() {
+    undoUntil = SystemClock.elapsedRealtime() + 10000;
+    scheduleUndoExpiration();
+  }
+
+  private void scheduleUndoExpiration() {
+    handler.postDelayed(
+        () -> {
+          if (editor == null && !isDestroyed()) render();
+        },
+        Math.max(1, undoUntil - SystemClock.elapsedRealtime() + 50));
+  }
+
+  void completePlan(Plan p, LocalDate date) {
+    perform(
+        () -> store.save(p.toggle(date)),
+        () -> {
+          deleted = null;
+          undoCompletionId = p.id;
+          undoCompletionDate = date;
+          undoWasComplete = p.checked(date);
+          undoMessage = undoWasComplete ? "已恢复计划" : "已划去计划";
+          startUndo();
+        });
+  }
+
+  void undoLastAction() {
+    if (SystemClock.elapsedRealtime() >= undoUntil) {
+      deleted = null;
+      undoCompletionId = null;
+      render();
+      return;
+    }
+    Plan restore = deleted;
+    String id = undoCompletionId;
+    LocalDate date = undoCompletionDate;
+    boolean was = undoWasComplete;
+    perform(
+        () -> {
+          if (restore != null) store.save(restore);
+          else {
+            Plan current =
+                store.all().stream().filter(p -> p.id.equals(id)).findFirst().orElse(null);
+            if (current != null && current.checked(date) != was) store.save(current.toggle(date));
+          }
+        },
+        () -> {
+          deleted = null;
+          undoCompletionId = null;
+        });
+  }
+
+  private void deletePlan(Plan p) {
+    Runnable remove =
+        () ->
+            perform(
+                () -> store.delete(p.id),
+                () -> {
+                  deleted = p;
+                  undoCompletionId = null;
+                  undoMessage = "计划已删除";
+                  startUndo();
+                });
+    if (p.recurring())
+      new AlertDialog.Builder(this)
+          .setTitle("删除整个长期计划？")
+          .setMessage("将同时删除 " + p.dates.size() + " 条完成记录，删除后 10 秒内可撤销。")
+          .setNegativeButton("取消", null)
+          .setPositiveButton("删除整个计划", (d, w) -> remove.run())
+          .show();
+    else remove.run();
   }
 
   private View card(Plan p, LocalDate date, Runnable dismiss) {
@@ -353,7 +578,7 @@ public final class MainActivity extends Activity {
         (b, c) -> {
           if (!busy) {
             dismiss.run();
-            perform(() -> store.save(p.toggle(date)), null);
+            completePlan(p, date);
           }
         });
     titleRow.addView(check);
@@ -376,6 +601,12 @@ public final class MainActivity extends Activity {
       add(card, badge, 8, 4);
     }
     add(card, text(p.timing(), 14, MUTED), 8, 0);
+    if (p.alarm != null) {
+      TextView status = text(alarmText(p), 14, ACCENT);
+      status.setTag(p.id);
+      alarmLabels.add(status);
+      add(card, status, 6, 0);
+    }
     if (p.recurring()) add(card, text("本次归属 " + date + "，按开始日期记录完成", 14, MUTED), 6, 0);
     if (p.recurring())
       add(
@@ -412,25 +643,7 @@ public final class MainActivity extends Activity {
     delete.setOnClickListener(
         v -> {
           dismiss.run();
-          new AlertDialog.Builder(this)
-              .setTitle(p.recurring() ? "删除整个长期计划？" : "删除计划？")
-              .setMessage(p.recurring() ? "将同时删除全部完成记录，删除后 10 秒内可撤销。" : "删除后 10 秒内可撤销。")
-              .setNegativeButton("取消", null)
-              .setPositiveButton(
-                  "删除",
-                  (d, w) ->
-                      perform(
-                          () -> store.delete(p.id),
-                          () -> {
-                            deleted = p;
-                            undoUntil = SystemClock.elapsedRealtime() + 10000;
-                            handler.postDelayed(
-                                () -> {
-                                  if (editor == null) render();
-                                },
-                                10050);
-                          }))
-              .show();
+          deletePlan(p);
         });
     actions.addView(delete, new LinearLayout.LayoutParams(0, -2, 1));
     add(card, actions, 8, 0);
@@ -566,7 +779,7 @@ public final class MainActivity extends Activity {
               if (w == 3) AlarmScheduler.permissions(this);
               else if (w == 2)
                 new AlertDialog.Builder(this)
-                    .setTitle("计划表 · v1.6.0")
+                    .setTitle("计划表 · v1.7.0")
                     .setMessage(
                         "离线保存于本机，无需账号。\n\n"
                             + "每天重复的长期计划可按持续天数或完成次数结束。通过 JSON 备份与 Windows 版手动迁移；两台设备不会自动同步。\n\n"
@@ -640,6 +853,10 @@ public final class MainActivity extends Activity {
   }
 
   void perform(Work work, Runnable done) {
+    perform(work, done, null);
+  }
+
+  void perform(Work work, Runnable done, java.util.function.Consumer<Exception> onError) {
     if (busy || isDestroyed()) return;
     busy = true;
     render();
@@ -661,7 +878,8 @@ public final class MainActivity extends Activity {
                   if (isDestroyed()) return;
                   busy = false;
                   render();
-                  error(message(e));
+                  if (onError != null) onError.accept(e);
+                  else error(message(e));
                 });
           }
         });

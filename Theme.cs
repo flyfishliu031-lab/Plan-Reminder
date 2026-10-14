@@ -13,7 +13,7 @@ internal static class Theme
     public static readonly Color Danger = ColorTranslator.FromHtml("#AC414B");
     public static readonly Font Body = new("Microsoft YaHei UI", 10.5f);
     public static readonly Font Small = new("Microsoft YaHei UI", 9.25f);
-    public static readonly Font Heading = new("Microsoft YaHei UI", 23, FontStyle.Bold);
+    public static readonly Font Heading = new("Microsoft YaHei UI", 20, FontStyle.Bold);
     public static readonly Font EditorHeading = new("Microsoft YaHei UI", 19, FontStyle.Bold);
     public static readonly Font Title = new("Microsoft YaHei UI", 12, FontStyle.Bold);
     public static readonly Font CompletedTitle = new("Microsoft YaHei UI", 12, FontStyle.Bold | FontStyle.Strikeout);
@@ -39,7 +39,7 @@ internal static class Theme
         BackColor = primary ? Accent : Color.White,
         ForeColor = primary ? Color.White : Ink,
         FlatAppearance = { BorderSize = primary ? 0 : 1, BorderColor = Line },
-        Cursor = Cursors.Hand, Height = 44, Width = 128,
+        Cursor = Cursors.Hand, Height = 40, Width = 128,
         Padding = new Padding(12, 0, 12, 0), UseMnemonic = false
     };
 

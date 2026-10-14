@@ -30,7 +30,7 @@ internal sealed class SettingsForm : Form
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         options.RowStyles.Add(new RowStyle(SizeType.AutoSize)); options.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         exitOnClose.Dock = DockStyle.Top; exitOnClose.Margin = new Padding(0, 0, 0, 12);
-        var hint = Theme.Label("不勾选时，关闭窗口会隐藏到系统托盘。点击托盘图标可重新打开，右键菜单可退出程序。", Theme.Small, Theme.Muted);
+        var hint = Theme.Label("默认：关闭窗口后继续在后台提醒。点击右下角托盘图标可重新打开。\n勾选上方选项：关闭窗口即退出，闹钟也会停止。\n软件会记住上次使用的视图；备份与恢复入口在主窗口左侧。", Theme.Small, Theme.Muted);
         hint.Dock = DockStyle.Top;
         options.SizeChanged += (_, _) => hint.MaximumSize = new Size(Math.Max(1, options.ClientSize.Width), 0);
         options.Controls.Add(exitOnClose, 0, 0); options.Controls.Add(hint, 0, 1); panel.Controls.Add(options);

@@ -10,10 +10,10 @@ internal sealed class DailyTimelineView : UserControl
     private DateOnly day;
     private readonly Button untimed = Theme.Button("未安排时间");
     private PlanItem[] untimedPlans = [];
+    private readonly Label hint = Theme.Label("拖选空白时间添加 · 也可用“添加计划”精确输入时间", Theme.Small, Theme.Muted);
     internal DaySegment[] Segments { get; private set; } = [];
     internal event Action<int, int>? RangeSelected;
     internal event Action<PlanItem, DateOnly>? OpenRequested;
-    internal event Action<DateOnly>? DateRequested;
     internal event Action? ListRequested;
 
     internal DailyTimelineView()
@@ -27,8 +27,6 @@ internal sealed class DailyTimelineView : UserControl
             var b = Theme.Button(text); b.Font = Theme.Small; b.Height = 32; b.Width = text.Length <= 3 ? 68 : 88;
             b.Padding = new Padding(6, 0, 6, 0); b.Margin = new Padding(0, 0, 6, 6); b.Click += (_, _) => action(); toolbar.Controls.Add(b);
         }
-        Action("前一天", () => { if (day.Year > 1753 || day.DayOfYear > 1) DateRequested?.Invoke(day.AddDays(-1)); });
-        Action("后一天", () => { if (day < new DateOnly(9998, 12, 31)) DateRequested?.Invoke(day.AddDays(1)); });
         Action("当前时段", () => ScrollTo(day == DateOnly.FromDateTime(DateTime.Now) ? DateTime.Now.Hour * 60 : 480));
         Action("计划列表", () => ListRequested?.Invoke());
         untimed.Font = Theme.Small; untimed.Height = 32; untimed.Width = 128; untimed.Padding = new Padding(6, 0, 6, 0);
@@ -40,7 +38,6 @@ internal sealed class DailyTimelineView : UserControl
         };
         var selection = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 2, Margin = new Padding(0, 0, 0, 12) };
         selection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); selection.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var hint = Theme.Label("拖选空白时间添加 · 也可用“添加计划”精确输入时间", Theme.Small, Theme.Muted);
         hint.Dock = DockStyle.Top; hint.Margin = new Padding(0, 0, 0, 8);
         selection.Controls.Add(hint, 0, 0); selection.SetColumnSpan(hint, 2);
         chooser.Margin = new Padding(0, 0, 8, 0); selection.Controls.Add(chooser, 0, 1);
@@ -141,10 +138,11 @@ internal sealed class DailyTimelineView : UserControl
             base.OnMouseDown(e); if (e.Button != MouseButtons.Left || e.X < LeftEdge) return;
             anchor = Math.Min(1439, Minute(e.Y)); cursor = anchor; Capture = true; Invalidate();
         }
-        protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (anchor is not null) { cursor = Minute(e.Y); Invalidate(); } }
+        protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (anchor is { } from) { cursor = Minute(e.Y); owner.hint.Text = $"已选 {DaySegment.Clock(Math.Min(from, cursor.Value))}—{DaySegment.Clock(Math.Max(from, cursor.Value))} · 松开填写计划"; Invalidate(); } }
         protected override void OnMouseUp(MouseEventArgs e) {
             base.OnMouseUp(e); if (anchor is not { } from || e.Button != MouseButtons.Left) return;
             var to = Minute(e.Y); anchor = cursor = null; Capture = false; Invalidate();
+            owner.hint.Text = "拖选空白时间添加 · 也可用“添加计划”精确输入时间";
             if (from == to) to = Math.Min(1440, from + 60);
             owner.RangeSelected?.Invoke(Math.Min(from, to), Math.Max(from, to));
         }

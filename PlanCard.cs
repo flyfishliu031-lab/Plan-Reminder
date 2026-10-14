@@ -44,6 +44,8 @@ internal sealed class PlanCard : UserControl
             (!overview ? $" · {(checkedOff ? "当天已完成" : day > today ? "未来日期当天可勾选" : "当天待完成")}" : !finished && checkedOff ? " · 今天已完成" : "") :
             "");
         timing.AutoSize = false;
+        if (item.Alarm is { } alarm) timing.Text += "\n" + alarm.Status(item, DateTimeOffset.Now);
+        if (item.IsRecurring && !overview) timing.Text += $"\n本次归属 {day:MM月dd日} · 完成记录按开始日期计算";
         notes.Text = item.Notes; notes.AutoSize = false; notes.AutoEllipsis = true;
         complete.BackColor = title.BackColor = timing.BackColor = notes.BackColor = status.BackColor = SurfaceColor;
         edit.BackColor = delete.BackColor = SurfaceColor;

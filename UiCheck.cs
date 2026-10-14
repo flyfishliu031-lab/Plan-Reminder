@@ -21,6 +21,17 @@ internal static class UiCheck
         main.Show(); Application.DoEvents();
         Capture(main, Path.Combine(directory, "main.png"));
         CheckText(main);
+        foreach (var button in Descendants(main.Calendar).OfType<Button>()) {
+            if (!main.Calendar.ClientRectangle.Contains(main.Calendar.RectangleToClient(button.RectangleToScreen(button.ClientRectangle)))) throw new InvalidOperationException($"Calendar button is clipped: {button.AccessibleName}, {main.Calendar.RectangleToClient(button.RectangleToScreen(button.ClientRectangle))}, calendar={main.Calendar.ClientRectangle}.");
+        }
+        using (var quick = new PlanEditor(new PlanItem { Title = "只写内容即可保存", Day = DateOnly.FromDateTime(DateTime.Now) }, true)) {
+            quick.Show(main); Application.DoEvents(); CheckText(quick);
+            if (!Descendants(quick).OfType<Button>().Any(b => b.Text == "展开 · 时间与时长")) throw new InvalidOperationException("New plan exposes optional time settings by default.");
+            Capture(quick, Path.Combine(directory, "editor-quick.png"));
+            Descendants(quick).OfType<Button>().Single(b => b.Text == "展开 · 时间与时长").PerformClick(); Application.DoEvents(); CheckText(quick);
+            Descendants(quick).OfType<Button>().Single(b => b.Text == "收起 · 时间与时长").PerformClick();
+            quick.SavePlan(); if (quick.Result?.Start is not null || quick.Result?.Title != "只写内容即可保存") throw new InvalidOperationException("Quick add did not preserve optional empty schedule.");
+        }
         var timelineDay = DateOnly.FromDateTime(DateTime.Now);
         store.Save(new PlanItem { Title = "专注学习", Day = timelineDay, EndDay = timelineDay, Start = new TimeOnly(9, 30), End = new TimeOnly(11, 0), Color = Palette.Colors[2] });
         store.Save(new PlanItem { Title = "复习笔记", Day = timelineDay, EndDay = timelineDay, Start = new TimeOnly(9, 15), End = new TimeOnly(10, 0), Color = Palette.Colors[1] });

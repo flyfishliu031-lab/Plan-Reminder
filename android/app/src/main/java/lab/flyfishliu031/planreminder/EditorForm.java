@@ -33,6 +33,14 @@ final class EditorForm {
   private final EditText alarmMinutes;
   private final Button ringtoneButton;
   private String ringtone;
+  private final java.util.Map<String, LinearLayout> sections = new java.util.LinkedHashMap<>();
+  private final java.util.Map<String, Button> sectionButtons = new java.util.LinkedHashMap<>();
+  private final TextView preview, goalLabel, repeatSummary;
+  private final Button permissions, setupTime;
+  private final ScrollView bodyScroll;
+  private final String draftId;
+  private final Instant draftCreated;
+  private String pendingRevision;
 
   EditorForm(MainActivity activity, Plan plan, Bundle state) {
     this(activity, plan, state, false);
@@ -41,9 +49,21 @@ final class EditorForm {
   EditorForm(MainActivity activity, Plan plan, Bundle state, boolean isNew) {
     a = activity;
     original = isNew ? null : plan;
+    draftId =
+        original != null
+            ? original.id
+            : state != null
+                ? state.getString("draftId", java.util.UUID.randomUUID().toString())
+                : plan != null ? plan.id : java.util.UUID.randomUUID().toString();
+    draftCreated =
+        original != null
+            ? original.createdAt
+            : state != null && state.containsKey("draftCreated")
+                ? Instant.parse(state.getString("draftCreated"))
+                : Instant.now();
     a.editor = this;
     LocalDate today = LocalDate.now();
-    day = plan != null && plan.day != null ? plan.day : a.selected;
+    day = plan != null && plan.day != null ? plan.day : a.mode == 2 ? today : a.selected;
     endDay = plan != null && plan.endDay != null ? plan.endDay : day;
     start = plan != null && plan.start != null ? plan.start : LocalTime.of(9, 0);
     end = plan != null && plan.end != null ? plan.end : LocalTime.of(10, 0);
@@ -62,11 +82,14 @@ final class EditorForm {
     dialog.setContentView(root);
     LinearLayout header = a.column();
     header.setPadding(a.dp(20), a.dp(16), a.dp(20), a.dp(12));
-    header.addView(a.text(original == null ? "添加计划" : "编辑计划", 26, MainActivity.INK));
-    if (original != null && original.recurring())
-      a.add(header, a.text("正在编辑整个长期计划；已有完成记录会保留。", 14, MainActivity.MUTED), 8, 0);
+    header.addView(a.text(original == null ? "添加计划" : "编辑计划", 22, MainActivity.INK));
+    preview = a.text("", 14, MainActivity.MUTED);
+    preview.setMaxLines(2);
+    preview.setEllipsize(TextUtils.TruncateAt.END);
+    a.add(header, preview, 6, 0);
     root.addView(header);
     ScrollView scroll = new ScrollView(a);
+    bodyScroll = scroll;
     scroll.setFillViewport(true);
     LinearLayout form = a.column();
     form.setPadding(a.dp(20), a.dp(8), a.dp(20), a.dp(24));
@@ -80,12 +103,15 @@ final class EditorForm {
             | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
     title.setGravity(Gravity.TOP);
     field(form, "计划内容", title);
+    int notesStart = form.getChildCount();
     notes = input("备注（可选）", plan == null ? "" : plan.notes, 5000, false);
     notes.setMinLines(2);
     notes.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
     notes.setGravity(Gravity.TOP);
     field(form, "备注 · 可选", notes);
-    repeated = checkbox("设为长期计划（每天重复）", plan != null && plan.recurring());
+    int repeatStart = form.getChildCount();
+    repeated =
+        checkbox("设为长期计划（每天重复）", plan != null && plan.recurring() || plan == null && a.mode == 2);
     a.add(form, repeated, 8, 0);
     repeatFields = a.column();
     days = new RadioButton(a);
@@ -100,7 +126,10 @@ final class EditorForm {
     times.setId(View.generateViewId());
     types.addView(days);
     types.addView(times);
-    types.check(plan != null && plan.repeatCount != null ? times.getId() : days.getId());
+    types.check(
+        plan != null && plan.repeatCount != null || plan == null && a.mode == 2
+            ? times.getId()
+            : days.getId());
     repeatFields.addView(types);
     int defaultGoal =
         plan == null
@@ -111,7 +140,11 @@ final class EditorForm {
                     ? (int) ChronoUnit.DAYS.between(plan.day, plan.repeatUntil) + 1
                     : 30;
     goal = input("长期计划目标", Integer.toString(defaultGoal), 5, true);
-    field(repeatFields, "目标数值", goal);
+    goalLabel = a.text("", 15, MainActivity.MUTED);
+    a.add(repeatFields, goalLabel, 12, 8);
+    a.add(repeatFields, goal, 0, 4);
+    repeatSummary = a.text("", 14, MainActivity.ACCENT);
+    a.add(repeatFields, repeatSummary, 8, 0);
     a.add(
         repeatFields,
         a.text(
@@ -119,6 +152,7 @@ final class EditorForm {
         8,
         4);
     a.add(form, repeatFields, 0, 8);
+    int timeStart = form.getChildCount();
     dated = checkbox("安排日期", plan == null ? a.mode != 1 : plan.day != null);
     a.add(form, dated, 8, 0);
     dateFields = a.column();
@@ -178,6 +212,18 @@ final class EditorForm {
                   update();
                 }));
     field(timeFields, "结束日期 · 跨天时调整", endDayButton);
+    LinearLayout quickTimes = a.row();
+    for (int minutes : new int[] {30, 60}) {
+      Button quick = a.button(minutes == 30 ? "30 分钟" : "1 小时", false);
+      quick.setOnClickListener(
+          v -> {
+            end = start.plusMinutes(minutes);
+            endDay = day.plusDays((start.toSecondOfDay() + minutes * 60) / 86400);
+            update();
+          });
+      quickTimes.addView(quick, new LinearLayout.LayoutParams(0, -2, 1));
+    }
+    a.add(timeFields, quickTimes, 8, 0);
     a.add(form, timeFields, 0, 8);
     expected = checkbox("设置预期时长 · 可选", plan != null && plan.durationMinutes != null);
     a.add(form, expected, 8, 0);
@@ -191,6 +237,7 @@ final class EditorForm {
     field(durationFields, "预期时长（分钟）", duration);
     a.add(durationFields, a.text("预期时长可独立设置，无需时间段。", 14, MainActivity.MUTED), 8, 4);
     form.addView(durationFields);
+    int alarmStartIndex = form.getChildCount();
     alarmEnabled = checkbox("添加闹钟 · 可选", plan != null && plan.alarm != null);
     a.add(form, alarmEnabled, 20, 0);
     alarmFields = a.column();
@@ -213,6 +260,18 @@ final class EditorForm {
                 ? alarmEnd.getId()
                 : alarmAfter.getId());
     alarmFields.addView(alarmModes);
+    setupTime = a.button("设置计划时间", false);
+    setupTime.setOnClickListener(
+        v -> {
+          dated.setChecked(true);
+          scheduled.setChecked(true);
+          openSection("时间与时长");
+          startButton.requestFocus();
+          startButton.requestRectangleOnScreen(
+              new android.graphics.Rect(0, 0, startButton.getWidth(), startButton.getHeight()),
+              true);
+        });
+    alarmFields.addView(setupTime);
     alarmAfterFields = a.column();
     alarmMinutes =
         input(
@@ -257,7 +316,7 @@ final class EditorForm {
           }
         });
     a.add(alarmFields, ringtoneButton, 8, 8);
-    Button permissions = a.button("闹钟权限与通知", false);
+    permissions = a.button("闹钟权限与通知", false);
     permissions.setOnClickListener(v -> AlarmScheduler.permissions(a));
     alarmFields.addView(permissions);
     a.add(
@@ -266,6 +325,7 @@ final class EditorForm {
         8,
         8);
     form.addView(alarmFields);
+    int colorsStart = form.getChildCount();
     LinearLayout colors = a.column();
     a.add(colors, a.text("计划颜色", 16, MainActivity.INK), 20, 8);
     for (int r = 0; r < 2; r++) {
@@ -317,17 +377,40 @@ final class EditorForm {
         });
     colors.addView(colorButton);
     form.addView(colors);
+    fold(form, colorsStart, form.getChildCount() - colorsStart, "计划颜色", false);
+    fold(
+        form,
+        alarmStartIndex,
+        colorsStart - alarmStartIndex,
+        "闹钟提醒",
+        plan != null && plan.alarm != null);
+    fold(
+        form,
+        timeStart,
+        alarmStartIndex - timeStart,
+        "时间与时长",
+        plan != null
+            && (plan.start != null
+                || plan.durationMinutes != null
+                || original != null && plan.day != null));
+    fold(form, repeatStart, timeStart - repeatStart, "长期计划", repeated.isChecked());
+    fold(form, notesStart, repeatStart - notesStart, "备注", plan != null && !plan.notes.isEmpty());
     error = a.text("", 14, MainActivity.DANGER);
     error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-    a.add(form, error, 12, 0);
-    LinearLayout footer = a.row();
+    error.setMaxLines(2);
+    error.setEllipsize(TextUtils.TruncateAt.END);
+    error.setVisibility(View.GONE);
+    LinearLayout footer = a.column();
     footer.setPadding(a.dp(20), a.dp(12), a.dp(20), a.dp(12));
+    a.add(footer, error, 0, 8);
+    LinearLayout actions = a.row();
     cancel = a.button("取消", false);
     save = a.button("保存计划", true);
     LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, -2, 1);
     cp.setMarginEnd(a.dp(12));
-    footer.addView(cancel, cp);
-    footer.addView(save, new LinearLayout.LayoutParams(0, -2, 2));
+    actions.addView(cancel, cp);
+    actions.addView(save, new LinearLayout.LayoutParams(0, -2, 2));
+    footer.addView(actions);
     root.addView(footer);
     cancel.setOnClickListener(v -> dialog.dismiss());
     save.setOnClickListener(v -> save());
@@ -335,9 +418,10 @@ final class EditorForm {
         (b, c) -> {
           if (c) {
             dated.setChecked(true);
+            openSection("长期计划");
           } else if (original != null && !original.dates.isEmpty()) {
             repeated.setChecked(true);
-            error.setText("已有完成记录的长期计划不能直接改为单次计划。");
+            showError("已有完成记录的长期计划不能直接改为单次计划。");
           }
           update();
         });
@@ -355,13 +439,39 @@ final class EditorForm {
     scheduled.setOnCheckedChangeListener(
         (b, c) -> {
           if (c) dated.setChecked(true);
+          if (c) openSection("时间与时长");
           update();
         });
-    expected.setOnCheckedChangeListener((b, c) -> update());
-    alarmEnabled.setOnCheckedChangeListener((b, c) -> update());
+    expected.setOnCheckedChangeListener(
+        (b, c) -> {
+          if (c) openSection("时间与时长");
+          update();
+        });
+    alarmEnabled.setOnCheckedChangeListener(
+        (b, c) -> {
+          if (c) openSection("闹钟提醒");
+          update();
+        });
     alarmModes.setOnCheckedChangeListener((g, id) -> update());
     alarmSound.setOnCheckedChangeListener((b, c) -> update());
+    types.setOnCheckedChangeListener((g, id) -> update());
+    TextWatcher watch =
+        new TextWatcher() {
+          public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+          public void onTextChanged(CharSequence s, int start, int before, int count) {
+            update();
+          }
+
+          public void afterTextChanged(Editable e) {}
+        };
+    for (EditText input : new EditText[] {goal, duration, alarmMinutes})
+      input.addTextChangedListener(watch);
     if (state != null) apply(state);
+    if (state != null)
+      for (String name : sections.keySet())
+        if (state.containsKey("section:" + name))
+          setSection(name, state.getBoolean("section:" + name));
     update();
     dialog.setOnDismissListener(
         d -> {
@@ -378,6 +488,49 @@ final class EditorForm {
       window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
       a.inset(root, window);
     }
+  }
+
+  private void fold(LinearLayout parent, int start, int count, String name, boolean expanded) {
+    LinearLayout content = a.column();
+    for (int i = 0; i < count; i++) {
+      View child = parent.getChildAt(start);
+      parent.removeViewAt(start);
+      content.addView(child);
+    }
+    LinearLayout wrapper = a.column();
+    Button toggle = a.button("", false);
+    toggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+    wrapper.addView(toggle);
+    wrapper.addView(content);
+    parent.addView(wrapper, start, new LinearLayout.LayoutParams(-1, -2));
+    sections.put(name, content);
+    sectionButtons.put(name, toggle);
+    setSection(name, expanded);
+    toggle.setOnClickListener(v -> setSection(name, content.getVisibility() != View.VISIBLE));
+  }
+
+  private void setSection(String name, boolean expanded) {
+    if (!sections.containsKey(name)) return;
+    sections.get(name).setVisibility(expanded ? View.VISIBLE : View.GONE);
+    sectionButtons.get(name).setText((expanded ? "收起 · " : "展开 · ") + name);
+  }
+
+  void openSection(String name) {
+    setSection(name, true);
+  }
+
+  private void showError(String text) {
+    error.setText(text);
+    error.setContentDescription(text);
+    error.setVisibility(View.VISIBLE);
+  }
+
+  void refreshPermissions() {
+    if (permissions != null)
+      permissions.setText(
+          AlarmScheduler.exactAllowed(a) && AlarmScheduler.notificationsAllowed(a)
+              ? "提醒权限已开启 · 查看设置"
+              : "闹钟待开启 · 点此允许提醒");
   }
 
   private CheckBox checkbox(String label, boolean checked) {
@@ -412,6 +565,9 @@ final class EditorForm {
   }
 
   private void update() {
+    refreshPermissions();
+    setupTime.setVisibility(
+        !alarmAfter.isChecked() && !scheduled.isChecked() ? View.VISIBLE : View.GONE);
     alarmFields.setVisibility(alarmEnabled.isChecked() ? View.VISIBLE : View.GONE);
     alarmAfterFields.setVisibility(alarmAfter.isChecked() ? View.VISIBLE : View.GONE);
     restartAlarm.setVisibility(
@@ -439,12 +595,49 @@ final class EditorForm {
     endDayButton.setEnabled(true);
     colorButton.setText("当前 " + color + " · 自定义颜色");
     colorButton.setTextColor(MainActivity.INK);
+    goalLabel.setText(days.isChecked() ? "持续多少天（含开始当天）" : "累计完成多少次（每天最多一次）");
+    String target = goal.getText().toString();
+    String summary = days.isChecked() ? "持续天数须为 1–3650 天" : "完成次数须为 1–10000 次";
+    try {
+      int count = Integer.parseInt(target);
+      if (count > 0 && count <= (days.isChecked() ? 3650 : 10000))
+        summary =
+            days.isChecked()
+                ? "从 " + day + " 开始，至 " + day.plusDays(count - 1) + "（含当天）"
+                : "累计完成 " + count + " 次后结束；今天最多计一次";
+    } catch (RuntimeException ignored) {
+    }
+    repeatSummary.setText(summary);
+    String description = dated.isChecked() ? day.toString() : "待安排";
+    if (scheduled.isChecked())
+      description +=
+          " · "
+              + Plan.clock(start)
+              + "—"
+              + (endDay.equals(day) ? "" : endDay.equals(day.plusDays(1)) ? "次日 " : endDay + " ")
+              + Plan.clock(end);
+    if (expected.isChecked()) description += " · 预计 " + duration.getText() + " 分钟";
+    if (repeated.isChecked()) description += " · 每天重复";
+    if (alarmEnabled.isChecked())
+      description +=
+          " · "
+              + (alarmAfter.isChecked()
+                  ? alarmMinutes.getText() + " 分钟后提醒"
+                  : alarmStart.isChecked() ? "开始提醒" : "结束提醒");
+    preview.setText((original != null && original.recurring() ? "编辑整个长期计划 · " : "") + description);
   }
 
   void save() {
     error.setText("");
+    error.setVisibility(View.GONE);
+    for (EditText input : new EditText[] {title, duration, goal, alarmMinutes})
+      input.setError(null);
+    scheduled.setError(null);
+    endDayButton.setError(null);
     try {
       Plan p = original == null ? new Plan() : original.copy();
+      p.id = draftId;
+      p.createdAt = draftCreated;
       p.title = title.getText().toString().trim();
       p.notes = notes.getText().toString().trim();
       p.color = color;
@@ -488,22 +681,55 @@ final class EditorForm {
         p.alarm = alarm;
       }
       p.validate();
-      boolean overlap = a.store.all().stream().anyMatch(p::overlaps);
-      if (overlap)
+      java.util.List<Plan> conflicts = new java.util.ArrayList<>();
+      for (Plan other : a.store.all()) if (p.overlaps(other)) conflicts.add(other);
+      if (!conflicts.isEmpty())
         new AlertDialog.Builder(a)
             .setTitle("时间段与其他计划重叠")
-            .setMessage("仍然保存这项计划？")
-            .setNegativeButton("返回修改", null)
+            .setMessage(
+                "与以下计划重叠：\n"
+                    + conflicts.stream()
+                        .limit(3)
+                        .map(
+                            other ->
+                                other.title.length() > 80
+                                    ? other.title.substring(0, 80) + "…"
+                                    : other.title)
+                        .collect(java.util.stream.Collectors.joining("\n")))
+            .setNegativeButton(
+                "修改时间",
+                (d, w) -> {
+                  openSection("时间与时长");
+                  startButton.requestFocus();
+                })
             .setPositiveButton("仍然保存", (d, w) -> commit(p))
             .show();
       else commit(p);
     } catch (Exception e) {
-      error.setText(MainActivity.message(e));
-      error.requestFocus();
-      a.toast(MainActivity.message(e));
+      showError(MainActivity.message(e));
       if (title.getText().toString().trim().isEmpty()) {
         title.setError("请填写计划内容");
         title.requestFocus();
+      } else if (alarmEnabled.isChecked() && !alarmAfter.isChecked() && !scheduled.isChecked()) {
+        openSection("时间与时长");
+        scheduled.setError("请先设置计划时间段");
+        scheduled.requestFocus();
+      } else if (MainActivity.message(e).contains("闹钟倒计时")) {
+        openSection("闹钟提醒");
+        alarmMinutes.setError(MainActivity.message(e));
+        alarmMinutes.requestFocus();
+      } else if (MainActivity.message(e).contains("预期时长")) {
+        openSection("时间与时长");
+        duration.setError(MainActivity.message(e));
+        duration.requestFocus();
+      } else if (MainActivity.message(e).contains("时间") || MainActivity.message(e).contains("日期")) {
+        openSection("时间与时长");
+        endDayButton.setError(MainActivity.message(e));
+        endDayButton.requestFocus();
+      } else if (repeated.isChecked()) {
+        openSection("长期计划");
+        goal.setError(MainActivity.message(e));
+        goal.requestFocus();
       }
     }
   }
@@ -514,6 +740,7 @@ final class EditorForm {
       if (n < 1) throw new NumberFormatException();
       return n;
     } catch (NumberFormatException ex) {
+      openSection(e == goal ? "长期计划" : e == alarmMinutes ? "闹钟提醒" : "时间与时长");
       e.setError(label + "须为正整数");
       e.requestFocus();
       throw new IllegalArgumentException(label + "须为正整数。");
@@ -521,6 +748,7 @@ final class EditorForm {
   }
 
   private void commit(Plan p) {
+    pendingRevision = p.updatedAt.toString();
     save.setEnabled(false);
     cancel.setEnabled(false);
     dialog.setCancelable(false);
@@ -533,10 +761,15 @@ final class EditorForm {
                           || !AlarmScheduler.notificationsAllowed(a))
                   ? "计划已保存；允许闹钟和通知权限后才能响铃"
                   : "计划已保存");
+          a.revealSaved(p);
           dialog.dismiss();
-          if (p.alarm != null
-              && (!AlarmScheduler.exactAllowed(a) || !AlarmScheduler.notificationsAllowed(a)))
-            AlarmScheduler.permissions(a);
+        },
+        failure -> {
+          pendingRevision = null;
+          showError("保存失败，填写内容已保留：" + MainActivity.message(failure));
+          save.setEnabled(true);
+          cancel.setEnabled(true);
+          dialog.setCancelable(true);
         });
     a.handler.postDelayed(this::checkSaving, 100);
   }
@@ -554,6 +787,11 @@ final class EditorForm {
 
   Bundle snapshot() {
     Bundle s = new Bundle();
+    s.putString("draftId", draftId);
+    s.putString("draftCreated", draftCreated.toString());
+    s.putString("pendingRevision", pendingRevision);
+    for (String name : sections.keySet())
+      s.putBoolean("section:" + name, sections.get(name).getVisibility() == View.VISIBLE);
     if (original != null)
       try {
         s.putString("original", original.json().toString());
@@ -615,6 +853,22 @@ final class EditorForm {
 
   static void restore(MainActivity a, Bundle s) {
     try {
+      if (s.getString("pendingRevision") != null) {
+        Plan saved =
+            a.store.all().stream()
+                .filter(
+                    p ->
+                        p.id.equals(s.getString("draftId"))
+                            && p.updatedAt.equals(Instant.parse(s.getString("pendingRevision"))))
+                .findFirst()
+                .orElse(null);
+        if (saved != null) {
+          a.revealSaved(saved);
+          a.render();
+          a.toast("计划已保存");
+          return;
+        }
+      }
       new EditorForm(
           a,
           s.containsKey("original") ? Plan.from(new JSONObject(s.getString("original"))) : null,
