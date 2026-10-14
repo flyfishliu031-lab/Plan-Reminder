@@ -395,6 +395,11 @@ final class EditorForm {
                 || original != null && plan.day != null));
     fold(form, repeatStart, timeStart - repeatStart, "长期计划", repeated.isChecked());
     fold(form, notesStart, repeatStart - notesStart, "备注", plan != null && !plan.notes.isEmpty());
+    for (String name : new String[] {"备注", "时间与时长", "长期计划", "闹钟提醒", "计划颜色"}) {
+      View wrapper = (View) sectionButtons.get(name).getParent();
+      form.removeView(wrapper);
+      form.addView(wrapper);
+    }
     error = a.text("", 14, MainActivity.DANGER);
     error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     error.setMaxLines(2);
@@ -502,7 +507,9 @@ final class EditorForm {
     toggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
     wrapper.addView(toggle);
     wrapper.addView(content);
-    parent.addView(wrapper, start, new LinearLayout.LayoutParams(-1, -2));
+    LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2);
+    layout.topMargin = a.dp(8);
+    parent.addView(wrapper, start, layout);
     sections.put(name, content);
     sectionButtons.put(name, toggle);
     setSection(name, expanded);

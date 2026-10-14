@@ -32,12 +32,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
 [Files]
 Source: "..\artifacts\publish\PlanReminder.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\assets\editor.png"; DestDir: "{app}\assets"; Flags: ignoreversion
-Source: "..\assets\main.png"; DestDir: "{app}\assets"; Flags: ignoreversion
-Source: "..\assets\settings.png"; DestDir: "{app}\assets"; Flags: ignoreversion
-Source: "..\assets\long-term.png"; DestDir: "{app}\assets"; Flags: ignoreversion
-Source: "..\assets\editor-long-term.png"; DestDir: "{app}\assets"; Flags: ignoreversion
-Source: "..\assets\editor-multiline.png"; DestDir: "{app}\assets"; Flags: ignoreversion
+Source: "..\assets\*.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 [Icons]
 Name: "{group}\计划表"; Filename: "{app}\PlanReminder.exe"
 Name: "{autodesktop}\计划表"; Filename: "{app}\PlanReminder.exe"; Tasks: desktopicon

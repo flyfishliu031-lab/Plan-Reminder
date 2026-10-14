@@ -22,6 +22,19 @@ import org.json.*;
 import org.junit.*;
 
 public class PlanTests {
+  @After
+  public void restoreDeviceAfterAlarmChecks() throws Exception {
+    Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+    inst.getTargetContext().stopService(new Intent(inst.getTargetContext(), AlarmService.class));
+    try (ParcelFileDescriptor fd =
+            inst.getUiAutomation().executeShellCommand("input keyevent 224");
+        InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(fd)) {
+      while (in.read() != -1) {}
+    }
+    SystemClock.sleep(350);
+    inst.waitForIdleSync();
+  }
+
   @Test
   public void quickAddFiltersUndoAndSavingRotation() throws Exception {
     String[] id = new String[1];

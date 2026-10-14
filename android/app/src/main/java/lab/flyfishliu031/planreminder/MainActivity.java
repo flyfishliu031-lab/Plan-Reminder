@@ -259,7 +259,9 @@ public final class MainActivity extends Activity {
           rememberView();
           render();
         });
-    dateRow.addView(today);
+    LinearLayout.LayoutParams todayLayout = new LinearLayout.LayoutParams(-2, -2);
+    todayLayout.setMarginStart(dp(6));
+    dateRow.addView(today, todayLayout);
     Button filter =
         button(
             mode == 3 ? "清单" : query.isEmpty() && stateFilter == 0 && mode != 1 ? "筛选" : "筛选·",
@@ -271,7 +273,9 @@ public final class MainActivity extends Activity {
           if (mode == 3) switchMode(0);
           else showFilters();
         });
-    dateRow.addView(filter);
+    LinearLayout.LayoutParams filterLayout = new LinearLayout.LayoutParams(-2, -2);
+    filterLayout.setMarginStart(dp(6));
+    dateRow.addView(filter, filterLayout);
     chrome.addView(dateRow);
     if (store.all().stream()
             .anyMatch(p -> p.alarm != null && p.alarm.next(p, Instant.now()) != null)
@@ -365,7 +369,9 @@ public final class MainActivity extends Activity {
             if (target == -1) settings();
             else switchMode(target);
           });
-      navigation.addView(item, new LinearLayout.LayoutParams(0, -2, 1));
+      LinearLayout.LayoutParams navLayout = new LinearLayout.LayoutParams(0, -2, 1);
+      if (i < navLabels.length - 1) navLayout.setMarginEnd(dp(6));
+      navigation.addView(item, navLayout);
     }
     if (mode == 3 && !selected.equals(timelineDayShown)) {
       timelineDayShown = selected;
@@ -930,6 +936,8 @@ public final class MainActivity extends Activity {
 
   Button button(String label, boolean primary) {
     Button b = new Button(this);
+    b.setStateListAnimator(null);
+    b.setElevation(0);
     b.setText(label);
     b.setTextSize(15);
     b.setAllCaps(false);

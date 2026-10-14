@@ -138,7 +138,9 @@ final class DailyTimelineView extends FrameLayout {
   void chooseMinute(int minute) {
     if (anchor == null) {
       anchor = Math.min(1439, minute);
-      a.toast("开始 " + DaySegment.clock(anchor) + "，请点击结束时间；可在编辑窗口精确调整");
+      android.widget.Toast.makeText(
+              a, "开始 " + DaySegment.clock(anchor) + "，请点结束时间", android.widget.Toast.LENGTH_SHORT)
+          .show();
       invalidate();
     } else {
       int from = anchor, to = minute;
