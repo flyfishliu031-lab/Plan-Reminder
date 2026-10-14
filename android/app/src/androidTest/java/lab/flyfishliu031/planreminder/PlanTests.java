@@ -117,8 +117,6 @@ public class PlanTests {
               inputs(decor).get(0).setText("后来编辑");
               ((Spinner) described(decor, "完成状态筛选")).setSelection(1);
               filters.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
-              assertEquals(1, a.list.getChildCount());
-              assertTrue(a.heading.getText().toString().startsWith("1 项匹配"));
             } catch (Exception e) {
               throw new AssertionError(e);
             }
@@ -126,6 +124,8 @@ public class PlanTests {
       SystemClock.sleep(300);
       scenario.onActivity(
           a -> {
+            assertEquals(1, a.list.getChildCount());
+            assertTrue(a.heading.getText().toString().startsWith("1 项匹配"));
             checkButtons(a.navigation);
             checkButtons(a.footer);
           });
@@ -155,6 +155,10 @@ public class PlanTests {
             ((Spinner) described(decor, "完成状态筛选")).setSelection(0);
             ((Spinner) described(decor, "计划范围")).setSelection(1);
             filters.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+          });
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+      scenario.onActivity(
+          a -> {
             assertEquals(1, a.mode);
             assertEquals(1, a.list.getChildCount());
             Plan dated = a.store.all().stream().filter(p -> p.id.equals(id[0])).findFirst().get();
