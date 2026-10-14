@@ -381,10 +381,16 @@ public class PlanTests {
           a.timeline.getLocationOnScreen(location);
           point[0] = location[0] + a.timeline.left + a.dp(40);
           point[1] = location[1] + a.timeline.top + minute * a.timeline.hour / 60;
+          Rect viewport = new Rect();
+          assertTrue(a.mainScroll.getGlobalVisibleRect(viewport));
+          if (point[1] < viewport.top + a.dp(16) || point[1] > viewport.bottom - a.dp(16)) {
+            a.mainScroll.scrollBy(0, Math.round(point[1] - viewport.exactCenterY()));
+            a.timeline.getLocationOnScreen(location);
+            point[1] = location[1] + a.timeline.top + minute * a.timeline.hour / 60;
+          }
           assertTrue(
-              "Tap must be on visible screen",
-              point[1] > 0
-                  && point[1] < a.getResources().getDisplayMetrics().heightPixels - a.dp(72));
+              "Tap must be inside the timeline scroll viewport, above fixed actions",
+              point[1] > viewport.top && point[1] < viewport.bottom);
         });
     Instrumentation inst = InstrumentationRegistry.getInstrumentation();
     long time = SystemClock.uptimeMillis();
